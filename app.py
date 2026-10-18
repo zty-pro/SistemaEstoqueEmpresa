@@ -1,5 +1,7 @@
 import os
-from flask import Flask, render_template_string, request, redirect, url_for, session
+import csv
+import io
+from flask import Flask, render_template_string, request, redirect, url_for, session, Response
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
@@ -89,11 +91,14 @@ HTML_TEMPLATE = """
         button.btn-venda:hover { background-color: #218838; }
         button.btn-cadastrar { background-color: #1a73e8; color: white; border: none; font-weight: bold; cursor: pointer; margin-top: 10px; }
         button.btn-cadastrar:hover { background-color: #1557b0; }
+        .btn-excel { background-color: #17a2b8; color: white; text-decoration: none; padding: 8px 14px; border-radius: 5px; font-size: 13px; font-weight: bold; display: inline-block; margin-right: 5px; }
+        .btn-excel:hover { background-color: #138496; }
         .nav-lojas { margin-bottom: 20px; }
         .nav-lojas a { text-decoration: none; padding: 8px 16px; background: #6c757d; color: white; border-radius: 5px; margin-right: 5px; display: inline-block; margin-bottom: 5px; }
         .nav-lojas a.active { background: #1a73e8; font-weight: bold; }
         .empty-msg { text-align: center; color: #777; padding: 20px; font-style: italic; }
         .chart-box { background: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 25px; }
+        .excel-actions { background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
     </style>
 </head>
 <body>
@@ -127,11 +132,36 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- MÓDULO DE RELATÓRIO E GRÁFICO -->
+        <!-- MÓDULO DE EXPORTAÇÃO E IMPORTAÇÃO EXCEL/CSV -->
+        <div class="excel-actions">
+            <div>
+                <strong>Gerir Produtos por Planilha:</strong><br>
+                <small>Exporte ou importe dados em massa (CSV).</small>
+            </div>
+            <div>
+                <a href="/exportar_estoque?loja_id={{ loja_atual_id }}" class="btn-excel">📥 Exportar Estoque (CSV)</a>
+            </div>
+        </div>
+
+        <div class="box-form" style="margin-bottom: 25px;">
+            <h3>📤 Importar Produtos via Planilha (CSV)</h3>
+            <form action="/importar_estoque" method="POST" enctype="multipart/form-data" style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;">
+                <input type="hidden" name="loja_id" value="{{ loja_atual_id }}">
+                <div style="flex: 1; min-width: 250px;">
+                    <label for="arquivo_csv">Selecione o arquivo CSV (Colunas: codigo, nome, preco, quantidade):</label>
+                    <input type="file" id="arquivo_csv" name="arquivo_csv" accept=".csv" required>
+                </div>
+                <div>
+                    <button type="submit" class="btn-cadastrar" style="margin-top: 0;">Importar Produtos</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- RELATÓRIO E GRÁFICO -->
         <div class="chart-box">
             <h3>📊 Relatório de Desempenho de Vendas</h3>
             {% if grafico_labels and grafico_dados %}
-                <canvas id="vendasChart" style="max-height: 300px;"></canvas>
+                <canvas id="vendasChart" style="max-height: 250px;"></canvas>
                 <script>
                     const ctx = document.getElementById('vendasChart').getContext('2d');
                     new Chart(ctx, {
@@ -180,7 +210,7 @@ HTML_TEMPLATE = """
             </tbody>
         </table>
         {% else %}
-            <div class="empty-msg">Nenhum produto cadastrado para esta loja ainda. Utilize o formulário abaixo para cadastrar!</div>
+            <div class="empty-msg">Nenhum produto cadastrado para esta loja ainda. Utilize o formulário abaixo ou importe uma planilha!</div>
         {% endif %}
 
         <div class="grid-forms">
@@ -345,7 +375,7 @@ def index():
     if produtos and 'loja_id' in produtos[0]:
         produtos = [p for p in produtos if str(p.get('loja_id')) == str(loja_atual_id)]
 
-    # Dados para o Gráfico de Vendas por Produto
+    # Gráfico de Vendas
     grafico_labels = []
     grafico_dados = []
     try:
@@ -379,6 +409,80 @@ def index():
         usuario_cargo=session.get("usuario_cargo")
     )
 
+@app.route("/exportar_estoque")
+def exportar_estoque():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    loja_id = request.args.get("loja_id")
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute("SELECT codigo, nome, preco, quantidade FROM estoque WHERE loja_id = %s;", (loja_id,))
+    except Exception:
+        cur.execute("SELECT codigo, nome, preco, quantidade FROM estoque;")
+        
+    produtos = cur.fetchall()
+    cur.close()
+    conn.close()
+    
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['codigo', 'nome', 'preco', 'quantidade'])
+    
+    for p in produtos:
+        writer.writerow([p.get('codigo'), p.get('nome'), p.get('preco'), p.get('quantidade')])
+        
+    output.seek(0)
+    return Response(
+        output,
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment;filename=estoque_loja.csv"}
+    )
+
+@app.route("/importar_estoque", methods=["POST"])
+def importar_estoque():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    loja_id = request.form.get("loja_id")
+    arquivo = request.files.get("arquivo_csv")
+    
+    if arquivo and arquivo.filename.endswith('.csv'):
+        stream = io.TextIOWrapper(arquivo.stream, encoding="utf-8")
+        reader = csv.DictReader(stream)
+        
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        for row in reader:
+            codigo = row.get('codigo')
+            nome = row.get('nome')
+            preco = float(row.get('preco', 0))
+            quantidade = int(row.get('quantidade', 0))
+            
+            if codigo and nome:
+                try:
+                    cur.execute(
+                        "INSERT INTO estoque (loja_id, codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s, %s);",
+                        (loja_id, codigo, nome, preco, quantidade)
+                    )
+                except Exception:
+                    try:
+                        cur.execute(
+                            "INSERT INTO estoque (codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s);",
+                            (codigo, nome, preco, quantidade)
+                        )
+                    except Exception:
+                        pass
+                        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+    return redirect(url_for("index", loja_id=loja_id))
+
 @app.route("/vender", methods=["POST"])
 def vender():
     if "usuario_id" not in session:
@@ -401,13 +505,11 @@ def vender():
         novo_estoque = prod['quantidade'] - qtd_venda
         valor_total = float(prod['preco']) * qtd_venda
         
-        # 1. Atualiza Estoque
         if 'id' in prod:
             cur.execute("UPDATE estoque SET quantidade = %s WHERE id = %s;", (novo_estoque, prod['id']))
         else:
             cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s;", (novo_estoque, codigo))
         
-        # 2. Atualiza Caixa
         try:
             cur.execute("SELECT * FROM lojas LIMIT 1;")
             exemplo_loja = cur.fetchone()
@@ -416,7 +518,6 @@ def vender():
         except Exception:
             pass
 
-        # 3. Registra na tabela de Vendas para Relatórios
         try:
             cur.execute(
                 "INSERT INTO vendas (loja_id, produto_codigo, produto_nome, quantidade, valor_total) VALUES (%s, %s, %s, %s, %s);",
