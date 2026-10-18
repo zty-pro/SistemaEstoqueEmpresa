@@ -59,7 +59,7 @@ HTML_TEMPLATE = """
                 <small>CNPJ: {{ loja_atual.cnpj }}</small>
             </div>
             <div>
-                <h2>Saldo em Caixa: <span style="color: #28a745;">R$ {{ "%.2f"|format(loja_atual.saldo_caixa) }}</span></h2>
+                <h2>Saldo em Caixa: <span style="color: #28a745;">R$ {{ "%.2f"|format(loja_atual.saldo_caixa|float) }}</span></h2>
             </div>
         </div>
 
@@ -78,7 +78,7 @@ HTML_TEMPLATE = """
                 <tr>
                     <td><strong>{{ p.codigo }}</strong></td>
                     <td>{{ p.nome }}</td>
-                    <td>R$ {{ "%.2f"|format(p.preco) }}</td>
+                    <td>R$ {{ "%.2f"|format(p.preco|float) }}</td>
                     <td><span style="font-weight:bold; color: {% if p.quantidade < 10 %}#dc3545{% else %}#333{% endif %};">{{ p.quantidade }} un</span></td>
                 </tr>
                 {% endfor %}
@@ -93,7 +93,7 @@ HTML_TEMPLATE = """
                 <label for="produto_codigo">Selecione o Produto:</label>
                 <select name="produto_codigo" id="produto_codigo" required>
                     {% for p in produtos %}
-                        <option value="{{ p.codigo }}">{{ p.codigo }} - {{ p.nome }} (R$ {{ "%.2f"|format(p.preco) }}) - Restam {{ p.quantidade }} un</option>
+                        <option value="{{ p.codigo }}">{{ p.codigo }} - {{ p.nome }} (R$ {{ "%.2f"|format(p.preco|float) }}) - Restam {{ p.quantidade }} un</option>
                     {% endfor %}
                 </select>
             </div>
