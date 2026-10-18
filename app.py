@@ -1,16 +1,65 @@
 import os
-from flask import Flask, render_template_string, request, redirect, url_for
+import csv
+import io
+from flask import Flask, render_template_string, request, redirect, url_for, session, Response, send_file
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+
 load_dotenv()
 
 app = Flask(__name__)
+app.secret_key = os.getenv("SECRET_KEY", "chave_secreta_para_sessoes_estoque_123")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+
+LOGIN_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Gestão de Estoque</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        .login-card { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 380px; }
+        h2 { color: #1a73e8; margin-top: 0; text-align: center; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 13px; }
+        input { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; font-size: 14px; }
+        button { width: 100%; padding: 12px; background-color: #1a73e8; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; font-size: 15px; margin-top: 10px; }
+        button:hover { background-color: #1557b0; }
+        .alert-error { background-color: #f8d7da; color: #721c24; padding: 10px; border-radius: 5px; margin-bottom: 15px; text-align: center; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <h2>🔒 Acesso ao Sistema</h2>
+        
+        {% if erro %}
+            <div class="alert-error">{{ erro }}</div>
+        {% endif %}
+
+        <form action="/login" method="POST">
+            <div class="form-group">
+                <label for="email">E-mail do Usuário:</label>
+                <input type="email" id="email" name="email" required placeholder="admin@empresa.com">
+            </div>
+            <div class="form-group">
+                <label for="senha">Senha:</label>
+                <input type="password" id="senha" name="senha" required placeholder="******">
+            </div>
+            <button type="submit">Entrar no Sistema</button>
+        </form>
+    </div>
+</body>
+</html>
+"""
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -19,9 +68,14 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sistema de Gestão de Estoque</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; color: #333; }
-        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 25px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .container { max-width: 950px; margin: 0 auto; background: white; padding: 25px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .header-user { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #eef3fc; padding-bottom: 10px; margin-bottom: 20px; }
+        .user-info { font-size: 14px; color: #555; }
+        .btn-logout { background: #dc3545; color: white; padding: 6px 12px; text-decoration: none; border-radius: 5px; font-size: 13px; font-weight: bold; }
+        .btn-logout:hover { background: #bd2130; }
         h1 { color: #1a73e8; margin-top: 0; }
         .card { background: #eef3fc; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
         .card h3 { margin: 0; }
@@ -40,23 +94,33 @@ HTML_TEMPLATE = """
         button.btn-venda:hover { background-color: #218838; }
         button.btn-cadastrar { background-color: #1a73e8; color: white; border: none; font-weight: bold; cursor: pointer; margin-top: 10px; }
         button.btn-cadastrar:hover { background-color: #1557b0; }
+        .btn-excel { background-color: #17a2b8; color: white; text-decoration: none; padding: 8px 14px; border-radius: 5px; font-size: 13px; font-weight: bold; display: inline-block; margin-right: 5px; }
+        .btn-excel:hover { background-color: #138496; }
+        .btn-pdf { background-color: #ffc107; color: #333; text-decoration: none; padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+        .btn-pdf:hover { background-color: #e0a800; }
         .nav-lojas { margin-bottom: 20px; }
         .nav-lojas a { text-decoration: none; padding: 8px 16px; background: #6c757d; color: white; border-radius: 5px; margin-right: 5px; display: inline-block; margin-bottom: 5px; }
         .nav-lojas a.active { background: #1a73e8; font-weight: bold; }
         .empty-msg { text-align: center; color: #777; padding: 20px; font-style: italic; }
-        .relatorio-section { margin-top: 30px; background: #fff3cd; padding: 20px; border-radius: 8px; border: 1px solid #ffeeba; }
-        .relatorio-section h3 { margin-top: 0; color: #856404; }
+        .chart-box { background: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 25px; }
+        .excel-actions { background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
     </style>
 </head>
 <body>
     <div class="container">
+        <div class="header-user">
+            <div class="user-info">
+                👤 Olá, <strong>{{ usuario_nome }}</strong> | Cargo: <strong>{{ usuario_cargo|upper }}</strong>
+            </div>
+            <a href="/logout" class="btn-logout">Sair do Sistema</a>
+        </div>
+
         <h1>📦 Sistema Unificado de Estoque & Caixa</h1>
         
         <div class="nav-lojas">
             <strong>Selecionar Loja:</strong><br><br>
             {% for l in lojas %}
-                {% set l_id = l.get('id', l.get('loja_id')) %}
-                <a href="/?loja_id={{ l_id }}" class="{% if l_id|string == loja_atual_id|string %}active{% endif %}">
+                <a href="/?loja_id={{ l.real_id }}" class="{% if l.real_id|string == loja_atual_id|string %}active{% endif %}">
                     {{ l.get('nome', 'Loja') }} ({{ l.get('cnpj', 'N/A') }})
                 </a>
             {% endfor %}
@@ -72,12 +136,98 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
+        <!-- EXPORTAÇÃO E IMPORTAÇÃO -->
+        <div class="excel-actions">
+            <div>
+                <strong>Gerir Produtos por Planilha:</strong><br>
+                <small>Exporte ou importe dados em massa (CSV).</small>
+            </div>
+            <div>
+                <a href="/exportar_estoque?loja_id={{ loja_atual_id }}" class="btn-excel">📥 Exportar Estoque (CSV)</a>
+            </div>
+        </div>
+
+        <div class="box-form" style="margin-bottom: 25px;">
+            <h3>📤 Importar Produtos via Planilha (CSV)</h3>
+            <form action="/importar_estoque" method="POST" enctype="multipart/form-data" style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;">
+                <input type="hidden" name="loja_id" value="{{ loja_atual_id }}">
+                <div style="flex: 1; min-width: 250px;">
+                    <label for="arquivo_csv">Selecione o arquivo CSV (Colunas: codigo, nome, preco, quantidade):</label>
+                    <input type="file" id="arquivo_csv" name="arquivo_csv" accept=".csv" required>
+                </div>
+                <div>
+                    <button type="submit" class="btn-cadastrar" style="margin-top: 0;">Importar Produtos</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- RELATÓRIO E GRÁFICO -->
+        <div class="chart-box">
+            <h3>📊 Relatório de Desempenho de Vendas</h3>
+            {% if grafico_labels and grafico_dados %}
+                <canvas id="vendasChart" style="max-height: 250px;"></canvas>
+                <script>
+                    const ctx = document.getElementById('vendasChart').getContext('2d');
+                    new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: {{ grafico_labels|tojson }},
+                            datasets: [{
+                                label: 'Total Vendido (R$)',
+                                data: {{ grafico_dados|tojson }},
+                                backgroundColor: '#1a73e8',
+                                borderRadius: 5
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: { legend: { display: false } },
+                            scales: { y: { beginAtZero: true } }
+                        }
+                    });
+                </script>
+            {% else %}
+                <div class="empty-msg">Nenhuma venda registrada nesta loja ainda para gerar o gráfico.</div>
+            {% endif %}
+        </div>
+
+        <!-- HISTÓRICO RECENTE DE VENDAS -->
+        <h2>📜 Histórico Recente de Vendas</h2>
+        {% if ultimas_vendas %}
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Produto</th>
+                    <th>Qtd</th>
+                    <th>Total (R$)</th>
+                    <th>Data/Hora</th>
+                    <th>Ação</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for v in ultimas_vendas %}
+                <tr>
+                    <td>#{{ v.get('id') }}</td>
+                    <td>{{ v.get('produto_nome') }}</td>
+                    <td>{{ v.get('quantidade') }} un</td>
+                    <td>R$ {{ "%.2f"|format(v.get('valor_total', 0)|float) }}</td>
+                    <td>{{ v.get('data_venda') }}</td>
+                    <td><a href="/comprovante_pdf/{{ v.get('id') }}" target="_blank" class="btn-pdf">📄 Baixar PDF</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+            <div class="empty-msg">Nenhuma venda efetuada recentemente.</div>
+        {% endif %}
+
         <h2>Produtos em Estoque</h2>
         {% if produtos %}
         <table>
             <thead>
                 <tr>
-                    <th>Código</th>
+                    <th>Código / ID</th>
                     <th>Nome do Produto</th>
                     <th>Preço (R$)</th>
                     <th>Quantidade</th>
@@ -85,17 +235,18 @@ HTML_TEMPLATE = """
             </thead>
             <tbody>
                 {% for p in produtos %}
+                {% set p_identifier = p.get('codigo') if p.get('codigo') else p.get('id') %}
                 <tr>
-                    <td><strong>{{ p.get('codigo', p.get('id', '')) }}</strong></td>
+                    <td><strong>{{ p_identifier }}</strong></td>
                     <td>{{ p.get('nome', '') }}</td>
                     <td>R$ {{ "%.2f"|format(p.get('preco', 0)|float) }}</td>
-                    <td><span style="font-weight:bold; color: {% if p.get('quantidade', 0) < 10 %}#dc3545{% else %}#28a745{% endif %};">{{ p.get('quantidade', 0) }} un</span></td>
+                    <td><span style="font-weight:bold; color: {% if p.get('quantidade', 0)|int < 10 %}#dc3545{% else %}#28a745{% endif %};">{{ p.get('quantidade', 0) }} un</span></td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
         {% else %}
-            <div class="empty-msg">Nenhum produto cadastrado para esta loja ainda. Utilize o formulário abaixo para cadastrar!</div>
+            <div class="empty-msg">Nenhum produto cadastrado para esta loja ainda. Utilize o formulário abaixo ou importe uma planilha!</div>
         {% endif %}
 
         <div class="grid-forms">
@@ -110,8 +261,8 @@ HTML_TEMPLATE = """
                         <select name="produto_codigo" id="produto_codigo" required {% if not produtos %}disabled{% endif %}>
                             {% if produtos %}
                                 {% for p in produtos %}
-                                    {% set p_cod = p.get('codigo', p.get('id', '')) %}
-                                    <option value="{{ p_cod }}">{{ p_cod }} - {{ p.get('nome', '') }} (R$ {{ "%.2f"|format(p.get('preco', 0)|float) }}) - Restam {{ p.get('quantidade', 0) }} un</option>
+                                    {% set p_identifier = p.get('codigo') if p.get('codigo') else p.get('id') %}
+                                    <option value="{{ p_identifier }}">{{ p_identifier }} - {{ p.get('nome', '') }} (R$ {{ "%.2f"|format(p.get('preco', 0)|float) }}) - Restam {{ p.get('quantidade', 0) }} un</option>
                                 {% endfor %}
                             {% else %}
                                 <option>Cadastre um produto primeiro...</option>
@@ -150,7 +301,7 @@ HTML_TEMPLATE = """
                     </div>
 
                     <div class="form-group">
-                        <labelfor="cad_qtd">Quantidade Inicial em Estoque:</label>
+                        <label for="cad_qtd">Quantidade Inicial em Estoque:</label>
                         <input type="number" id="cad_qtd" name="quantidade" min="0" value="10" required>
                     </div>
 
@@ -176,21 +327,50 @@ HTML_TEMPLATE = """
                 </div>
             </form>
         </div>
-
-        <!-- RELATÓRIO GERAL -->
-        <div class="relatorio-section">
-            <h3>📊 Relatório Consolidado Geral</h3>
-            <p><strong>Total de Lojas Cadastradas:</strong> {{ lojas|length }}</p>
-            <p><strong>Saldo Total em Caixa (Todas as Lojas):</strong> R$ {{ "%.2f"|format(total_caixa|float) }}</p>
-            <p><strong>Total de Itens em Estoque na Loja Atual:</strong> {{ produtos|sum(attribute='quantidade') }} unidades</p>
-        </div>
     </div>
 </body>
 </html>
 """
 
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        email = request.form.get("email")
+        senha = request.form.get("senha")
+        
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        try:
+            cur.execute("SELECT * FROM usuarios WHERE email = %s AND senha = %s;", (email, senha))
+            user = cur.fetchone()
+        except Exception:
+            user = None
+            
+        cur.close()
+        conn.close()
+        
+        if user:
+            session["usuario_id"] = user.get("id")
+            session["usuario_nome"] = user.get("nome", "Usuário")
+            session["usuario_cargo"] = user.get("cargo", "admin")
+            session["loja_id"] = user.get("loja_id")
+            return redirect(url_for("index"))
+        else:
+            return render_template_string(LOGIN_TEMPLATE, erro="E-mail ou senha incorretos.")
+            
+    return render_template_string(LOGIN_TEMPLATE)
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
 @app.route("/")
 def index():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
     loja_id_param = request.args.get("loja_id")
     conn = get_db_connection()
     cur = conn.cursor()
@@ -202,38 +382,60 @@ def index():
         cur.close()
         conn.close()
         return "Nenhuma loja cadastrada.", 404
-        
-    primeira_loja = lojas[0]
-    id_col = 'id' if 'id' in primeira_loja else ('loja_id' if 'loja_id' in primeira_loja else list(primeira_loja.keys())[0])
-    
+
+    for idx, l in enumerate(lojas):
+        l['real_id'] = str(l.get('id', l.get('loja_id', idx + 1)))
+
     loja_atual = None
     if loja_id_param:
         for l in lojas:
-            if str(l.get(id_col)) == str(loja_id_param):
+            if str(l['real_id']) == str(loja_id_param):
                 loja_atual = l
                 break
                 
     if not loja_atual:
         loja_atual = lojas[0]
         
-    loja_atual_id = loja_atual.get(id_col)
+    loja_atual_id = str(loja_atual['real_id'])
     
-    # Busca produtos da loja atual
+    cur.execute("SELECT * FROM estoque;")
+    todos_produtos = cur.fetchall()
+    produtos = []
+    for p in todos_produtos:
+        p_loja = str(p.get('loja_id', ''))
+        if not p_loja or p_loja == loja_atual_id or p_loja == 'None':
+            produtos.append(p)
+
+    grafico_labels = []
+    grafico_dados = []
     try:
-        cur.execute("SELECT * FROM estoque WHERE loja_id = %s;", (loja_atual_id,))
+        cur.execute("""
+            SELECT produto_nome, SUM(valor_total) as total 
+            FROM vendas 
+            WHERE loja_id::text = %s 
+            GROUP BY produto_nome 
+            ORDER BY total DESC 
+            LIMIT 5;
+        """, (loja_atual_id,))
+        vendas_res = cur.fetchall()
+        for v in vendas_res:
+            grafico_labels.append(v['produto_nome'])
+            grafico_dados.append(float(v['total']))
     except Exception:
-        try:
-            cur.execute("SELECT * FROM estoque;")
-        except Exception:
-            pass
-            
-    produtos = cur.fetchall() if 'produtos' in locals() and isinstance(produtos, list) else []
-    if produtos and 'loja_id' in produtos[0]:
-        produtos = [p for p in produtos if str(p.get('loja_id')) == str(loja_atual_id)]
-        
-    # Calcula saldo total em caixa de todas as lojas para o relatório
-    total_caixa = sum([float(l.get('saldo_caixa', 0) or 0) for l in lojas])
-        
+        pass
+
+    ultimas_vendas = []
+    try:
+        cur.execute("""
+            SELECT id, produto_nome, quantidade, valor_total, data_venda 
+            FROM vendas 
+            ORDER BY id DESC 
+            LIMIT 10;
+        """)
+        ultimas_vendas = cur.fetchall()
+    except Exception:
+        pass
+
     cur.close()
     conn.close()
     
@@ -243,11 +445,18 @@ def index():
         loja_atual=loja_atual, 
         loja_atual_id=loja_atual_id, 
         produtos=produtos,
-        total_caixa=total_caixa
+        grafico_labels=grafico_labels,
+        grafico_dados=grafico_dados,
+        ultimas_vendas=ultimas_vendas,
+        usuario_nome=session.get("usuario_nome"),
+        usuario_cargo=session.get("usuario_cargo")
     )
 
 @app.route("/vender", methods=["POST"])
 def vender():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
     loja_id = request.form.get("loja_id")
     codigo = request.form.get("produto_codigo")
     qtd_venda = request.form.get("quantidade", type=int)
@@ -258,54 +467,53 @@ def vender():
     conn = get_db_connection()
     cur = conn.cursor()
     
-    try:
-        # Busca o produto exato
-        if loja_id:
-            try:
-                cur.execute("SELECT * FROM estoque WHERE codigo = %s AND loja_id = %s;", (str(codigo).strip(), loja_id))
-                prod = cur.fetchone()
-            except Exception:
-                prod = None
-        else:
-            prod = None
-
-        if not prod:
-            cur.execute("SELECT * FROM estoque WHERE codigo = %s;", (str(codigo).strip(),))
-            prod = cur.fetchone()
+    # Busca robusta do produto no estoque
+    cur.execute("SELECT * FROM estoque WHERE codigo = %s;", (codigo,))
+    prod = cur.fetchone()
+    
+    if not prod and codigo.isdigit():
+        cur.execute("SELECT * FROM estoque WHERE id = %s;", (int(codigo),))
+        prod = cur.fetchone()
+    
+    if prod and int(prod.get('quantidade', 0)) >= qtd_venda:
+        novo_estoque = int(prod['quantidade']) - qtd_venda
+        valor_total = float(prod['preco']) * qtd_venda
         
-        if prod and int(prod.get('quantidade', 0)) >= qtd_venda:
-            novo_estoque = int(prod['quantidade']) - qtd_venda
-            valor_total = float(prod.get('preco', 0)) * qtd_venda
-            
-            # Atualiza o estoque
-            if 'id' in prod and prod['id']:
-                cur.execute("UPDATE estoque SET quantidade = %s WHERE id = %s;", (novo_estoque, prod['id']))
-            else:
-                cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s;", (novo_estoque, str(codigo).strip()))
-            
-            # Atualiza o saldo em caixa da loja
-            if loja_id:
-                try:
-                    cur.execute("SELECT * FROM lojas LIMIT 1;")
-                    exemplo_loja = cur.fetchone()
-                    loja_id_col = 'id' if 'id' in exemplo_loja else ('loja_id' if 'loja_id' in exemplo_loja else list(exemplo_loja.keys())[0])
-                    
-                    cur.execute(f"UPDATE lojas SET saldo_caixa = COALESCE(saldo_caixa, 0) + %s WHERE {loja_id_col} = %s;", (valor_total, loja_id))
-                except Exception:
-                    pass
-                    
-            conn.commit()
-    except Exception as e:
-        conn.rollback()
-        print(f"Erro na venda: {e}")
-    finally:
-        cur.close()
-        conn.close()
+        # 1. Baixa no estoque
+        if 'id' in prod:
+            cur.execute("UPDATE estoque SET quantidade = %s WHERE id = %s;", (novo_estoque, prod['id']))
+        else:
+            cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s;", (novo_estoque, codigo))
+        
+        # 2. Atualiza Saldo do Caixa
+        try:
+            loja_id_num = int(loja_id) if loja_id and loja_id.isdigit() else 1
+            cur.execute("UPDATE lojas SET saldo_caixa = COALESCE(saldo_caixa, 0) + %s WHERE id = %s OR loja_id = %s;", (valor_total, loja_id_num, loja_id_num))
+        except Exception:
+            conn.rollback()
+
+        # 3. Registra a Venda na tabela de vendas
+        try:
+            loja_id_num = int(loja_id) if loja_id and loja_id.isdigit() else 1
+            cur.execute(
+                "INSERT INTO vendas (loja_id, produto_codigo, produto_nome, quantidade, valor_total) VALUES (%s, %s, %s, %s, %s);",
+                (loja_id_num, str(codigo), prod.get('nome', 'Produto'), qtd_venda, valor_total)
+            )
+        except Exception:
+            conn.rollback()
+                
+        conn.commit()
+        
+    cur.close()
+    conn.close()
     
     return redirect(url_for("index", loja_id=loja_id))
 
 @app.route("/cadastrar_produto", methods=["POST"])
 def cadastrar_produto():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
     loja_id = request.form.get("loja_id")
     codigo = request.form.get("codigo")
     nome = request.form.get("nome")
@@ -316,20 +524,154 @@ def cadastrar_produto():
         conn = get_db_connection()
         cur = conn.cursor()
         
+        loja_id_num = int(loja_id) if loja_id and loja_id.isdigit() else 1
         try:
             cur.execute(
                 "INSERT INTO estoque (loja_id, codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s, %s);",
-                (loja_id, codigo, nome, preco, quantidade)
+                (loja_id_num, codigo, nome, preco, quantidade)
             )
         except Exception:
+            conn.rollback()
             try:
                 cur.execute(
                     "INSERT INTO estoque (codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s);",
                     (codigo, nome, preco, quantidade)
                 )
             except Exception:
-                pass
+                conn.rollback()
             
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+    return redirect(url_for("index", loja_id=loja_id))
+
+@app.route("/comprovante_pdf/<int:venda_id>")
+def comprovante_pdf(venda_id):
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    cur.execute("SELECT * FROM vendas WHERE id = %s;", (venda_id,))
+    venda = cur.fetchone()
+    
+    if not venda:
+        cur.close()
+        conn.close()
+        return "Comprovante não encontrado.", 404
+        
+    cur.execute("SELECT * FROM lojas WHERE id = %s OR loja_id = %s LIMIT 1;", (venda['loja_id'], venda['loja_id']))
+    loja = cur.fetchone()
+    cur.close()
+    conn.close()
+    
+    loja_nome = loja.get('nome', 'Empresa / Loja') if loja else 'Sistema de Estoque'
+    loja_cnpj = loja.get('cnpj', 'N/A') if loja else 'N/A'
+    
+    buffer = io.BytesIO()
+    p = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    
+    p.setFont("Helvetica-Bold", 16)
+    p.drawString(50, height - 50, f"COMPROVANTE DE VENDA")
+    
+    p.setFont("Helvetica", 11)
+    p.drawString(50, height - 75, f"Loja: {loja_nome} | CNPJ: {loja_cnpj}")
+    p.drawString(50, height - 95, f"Transação ID: #{venda['id']}")
+    p.drawString(50, height - 115, f"Data e Hora: {venda['data_venda']}")
+    
+    p.setStrokeColorRGB(0.2, 0.4, 0.8)
+    p.setLineWidth(1)
+    p.line(50, height - 130, width - 50, height - 130)
+    
+    p.setFont("Helvetica-Bold", 12)
+    p.drawString(50, height - 160, "Item Adquirido:")
+    
+    p.setFont("Helvetica", 11)
+    p.drawString(70, height - 185, f"Produto: {venda['produto_nome']} (Cód: {venda['produto_codigo']})")
+    p.drawString(70, height - 205, f"Quantidade: {venda['quantidade']} unidade(s)")
+    p.drawString(70, height - 225, f"Valor Total: R$ {float(venda['valor_total']):.2f}")
+    
+    p.line(50, height - 250, width - 50, height - 250)
+    
+    p.setFont("Helvetica-Oblique", 9)
+    p.drawString(50, height - 280, "Documento gerado eletronicamente pelo Sistema de Gestão de Estoque & Caixa.")
+    p.drawString(50, height - 295, "Obrigado pela preferência!")
+    
+    p.showPage()
+    p.save()
+    
+    buffer.seek(0)
+    return send_file(buffer, as_attachment=True, download_name=f"comprovante_venda_{venda_id}.pdf", mimetype="application/pdf")
+
+@app.route("/exportar_estoque")
+def exportar_estoque():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    loja_id = request.args.get("loja_id")
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    cur.execute("SELECT codigo, nome, preco, quantidade FROM estoque;")
+    produtos = cur.fetchall()
+    cur.close()
+    conn.close()
+    
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['codigo', 'nome', 'preco', 'quantidade'])
+    
+    for p in produtos:
+        writer.writerow([p.get('codigo'), p.get('nome'), p.get('preco'), p.get('quantidade')])
+        
+    output.seek(0)
+    return Response(
+        output,
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment;filename=estoque_loja.csv"}
+    )
+
+@app.route("/importar_estoque", methods=["POST"])
+def importar_estoque():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    loja_id = request.form.get("loja_id")
+    arquivo = request.files.get("arquivo_csv")
+    
+    if arquivo and arquivo.filename.endswith('.csv'):
+        stream = io.TextIOWrapper(arquivo.stream, encoding="utf-8")
+        reader = csv.DictReader(stream)
+        
+        conn = get_db_connection()
+        cur = conn.cursor()
+        loja_id_num = int(loja_id) if loja_id and loja_id.isdigit() else 1
+        
+        for row in reader:
+            codigo = row.get('codigo')
+            nome = row.get('nome')
+            preco = float(row.get('preco', 0))
+            quantidade = int(row.get('quantidade', 0))
+            
+            if codigo and nome:
+                try:
+                    cur.execute(
+                        "INSERT INTO estoque (loja_id, codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s, %s);",
+                        (loja_id_num, codigo, nome, preco, quantidade)
+                    )
+                except Exception:
+                    conn.rollback()
+                    try:
+                        cur.execute(
+                            "INSERT INTO estoque (codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s);",
+                            (codigo, nome, preco, quantidade)
+                        )
+                    except Exception:
+                        conn.rollback()
+                        
         conn.commit()
         cur.close()
         conn.close()
@@ -338,6 +680,9 @@ def cadastrar_produto():
 
 @app.route("/cadastrar_loja", methods=["POST"])
 def cadastrar_loja():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
     nome = request.form.get("nome")
     cnpj = request.form.get("cnpj")
     
@@ -351,13 +696,14 @@ def cadastrar_loja():
                 (nome, cnpj)
             )
         except Exception:
+            conn.rollback()
             try:
                 cur.execute(
                     "INSERT INTO lojas (nome, cnpj) VALUES (%s, %s);",
                     (nome, cnpj)
                 )
             except Exception:
-                pass
+                conn.rollback()
             
         conn.commit()
         cur.close()
