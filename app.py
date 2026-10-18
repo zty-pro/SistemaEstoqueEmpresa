@@ -1,5 +1,5 @@
 import os
-from flask import Flask, render_template_string, request, redirect, url_for
+from flask import Flask, render_template_string, request, redirect, url_for, session
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
@@ -7,10 +7,54 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
+app.secret_key = os.getenv("SECRET_KEY", "chave_secreta_para_sessoes_estoque_123")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+
+LOGIN_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Gestão de Estoque</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        .login-card { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 380px; }
+        h2 { color: #1a73e8; margin-top: 0; text-align: center; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 13px; }
+        input { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; font-size: 14px; }
+        button { width: 100%; padding: 12px; background-color: #1a73e8; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; font-size: 15px; margin-top: 10px; }
+        button:hover { background-color: #1557b0; }
+        .alert-error { background-color: #f8d7da; color: #721c24; padding: 10px; border-radius: 5px; margin-bottom: 15px; text-align: center; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <h2>🔒 Acesso ao Sistema</h2>
+        
+        {% if erro %}
+            <div class="alert-error">{{ erro }}</div>
+        {% endif %}
+
+        <form action="/login" method="POST">
+            <div class="form-group">
+                <label for="email">E-mail do Usuário:</label>
+                <input type="email" id="email" name="email" required placeholder="admin@empresa.com">
+            </div>
+            <div class="form-group">
+                <label for="senha">Senha:</label>
+                <input type="password" id="senha" name="senha" required placeholder="******">
+            </div>
+            <button type="submit">Entrar no Sistema</button>
+        </form>
+    </div>
+</body>
+</html>
+"""
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -22,6 +66,10 @@ HTML_TEMPLATE = """
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; color: #333; }
         .container { max-width: 950px; margin: 0 auto; background: white; padding: 25px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .header-user { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #eef3fc; padding-bottom: 10px; margin-bottom: 20px; }
+        .user-info { font-size: 14px; color: #555; }
+        .btn-logout { background: #dc3545; color: white; padding: 6px 12px; text-decoration: none; border-radius: 5px; font-size: 13px; font-weight: bold; }
+        .btn-logout:hover { background: #bd2130; }
         h1 { color: #1a73e8; margin-top: 0; }
         .card { background: #eef3fc; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
         .card h3 { margin: 0; }
@@ -48,6 +96,13 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
+        <div class="header-user">
+            <div class="user-info">
+                👤 Olá, <strong>{{ usuario_nome }}</strong> | Cargo: <strong>{{ usuario_cargo|upper }}</strong>
+            </div>
+            <a href="/logout" class="btn-logout">Sair do Sistema</a>
+        </div>
+
         <h1>📦 Sistema Unificado de Estoque & Caixa</h1>
         
         <div class="nav-lojas">
@@ -179,13 +234,49 @@ HTML_TEMPLATE = """
 </html>
 """
 
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        email = request.form.get("email")
+        senha = request.form.get("senha")
+        
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        try:
+            cur.execute("SELECT * FROM usuarios WHERE email = %s AND senha = %s;", (email, senha))
+            user = cur.fetchone()
+        except Exception:
+            user = None
+            
+        cur.close()
+        conn.close()
+        
+        if user:
+            session["usuario_id"] = user.get("id")
+            session["usuario_nome"] = user.get("nome", "Usuário")
+            session["usuario_cargo"] = user.get("cargo", "admin")
+            session["loja_id"] = user.get("loja_id")
+            return redirect(url_for("index"))
+        else:
+            return render_template_string(LOGIN_TEMPLATE, erro="E-mail ou senha incorretos.")
+            
+    return render_template_string(LOGIN_TEMPLATE)
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
 @app.route("/")
 def index():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
     loja_id_param = request.args.get("loja_id")
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Seleciona todas as lojas sem ordenar por colunas fixas para evitar erros
     cur.execute("SELECT * FROM lojas;")
     lojas = cur.fetchall()
     
@@ -194,7 +285,6 @@ def index():
         conn.close()
         return "Nenhuma loja cadastrada.", 404
         
-    # Identifica o identificador da loja dinamicamente
     primeira_loja = lojas[0]
     id_col = 'id' if 'id' in primeira_loja else ('loja_id' if 'loja_id' in primeira_loja else list(primeira_loja.keys())[0])
     
@@ -210,7 +300,6 @@ def index():
         
     loja_atual_id = loja_atual.get(id_col)
     
-    # Busca produtos da tabela 'estoque'
     try:
         cur.execute("SELECT * FROM estoque WHERE loja_id = %s;", (loja_atual_id,))
     except Exception:
@@ -226,10 +315,21 @@ def index():
     cur.close()
     conn.close()
     
-    return render_template_string(HTML_TEMPLATE, lojas=lojas, loja_atual=loja_atual, loja_atual_id=loja_atual_id, produtos=produtos)
+    return render_template_string(
+        HTML_TEMPLATE, 
+        lojas=lojas, 
+        loja_atual=loja_atual, 
+        loja_atual_id=loja_atual_id, 
+        produtos=produtos,
+        usuario_nome=session.get("usuario_nome"),
+        usuario_cargo=session.get("usuario_cargo")
+    )
 
 @app.route("/vender", methods=["POST"])
 def vender():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
     loja_id = request.form.get("loja_id")
     codigo = request.form.get("produto_codigo")
     qtd_venda = request.form.get("quantidade", type=int)
@@ -247,90 +347,4 @@ def vender():
         novo_estoque = prod['quantidade'] - qtd_venda
         valor_total = float(prod['preco']) * qtd_venda
         
-        # Atualiza o estoque do produto
-        if 'id' in prod:
-            cur.execute("UPDATE estoque SET quantidade = %s WHERE id = %s;", (novo_estoque, prod['id']))
-        else:
-            cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s;", (novo_estoque, codigo))
-        
-        # Atualiza o caixa da loja dinamicamente
-        try:
-            cur.execute("SELECT * FROM lojas LIMIT 1;")
-            exemplo_loja = cur.fetchone()
-            loja_id_col = 'id' if 'id' in exemplo_loja else ('loja_id' if 'loja_id' in exemplo_loja else list(exemplo_loja.keys())[0])
-            
-            cur.execute(f"UPDATE lojas SET saldo_caixa = saldo_caixa + %s WHERE {loja_id_col} = %s;", (valor_total, loja_id))
-        except Exception:
-            pass
-                
-        conn.commit()
-        
-    cur.close()
-    conn.close()
-    
-    return redirect(url_for("index", loja_id=loja_id))
-
-@app.route("/cadastrar_produto", methods=["POST"])
-def cadastrar_produto():
-    loja_id = request.form.get("loja_id")
-    codigo = request.form.get("codigo")
-    nome = request.form.get("nome")
-    preco = request.form.get("preco", type=float)
-    quantidade = request.form.get("quantidade", type=int)
-    
-    if codigo and nome and preco is not None and quantidade is not None:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        
-        try:
-            cur.execute(
-                "INSERT INTO estoque (loja_id, codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s, %s);",
-                (loja_id, codigo, nome, preco, quantidade)
-            )
-        except Exception:
-            try:
-                cur.execute(
-                    "INSERT INTO estoque (codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s);",
-                    (codigo, nome, preco, quantidade)
-                )
-            except Exception:
-                pass
-            
-        conn.commit()
-        cur.close()
-        conn.close()
-        
-    return redirect(url_for("index", loja_id=loja_id))
-
-@app.route("/cadastrar_loja", methods=["POST"])
-def cadastrar_loja():
-    nome = request.form.get("nome")
-    cnpj = request.form.get("cnpj")
-    
-    if nome and cnpj:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        
-        try:
-            cur.execute(
-                "INSERT INTO lojas (nome, cnpj, saldo_caixa) VALUES (%s, %s, 0.0);",
-                (nome, cnpj)
-            )
-        except Exception:
-            try:
-                cur.execute(
-                    "INSERT INTO lojas (nome, cnpj) VALUES (%s, %s);",
-                    (nome, cnpj)
-                )
-            except Exception:
-                pass
-            
-        conn.commit()
-        cur.close()
-        conn.close()
-        
-    return redirect(url_for("index"))
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+        if 'id'
