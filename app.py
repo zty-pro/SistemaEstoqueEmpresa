@@ -13,12 +13,12 @@ def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
 def init_db():
-    """Cria as tabelas automaticamente se não existirem no Supabase"""
+    """Garante que as tabelas existem no Supabase"""
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         
-        # Tabela de Lojas
+        # Cria a tabela de lojas caso não exista nenhuma
         cur.execute("""
             CREATE TABLE IF NOT EXISTS lojas (
                 id SERIAL PRIMARY KEY,
@@ -28,11 +28,10 @@ def init_db():
             );
         """)
         
-        # Tabela de Produtos
         cur.execute("""
             CREATE TABLE IF NOT EXISTS produtos (
                 id SERIAL PRIMARY KEY,
-                loja_id INTEGER REFERENCES lojas(id) ON DELETE CASCADE,
+                loja_id INTEGER,
                 codigo VARCHAR(50) NOT NULL,
                 nome VARCHAR(150) NOT NULL,
                 preco NUMERIC(12, 2) NOT NULL,
@@ -40,10 +39,10 @@ def init_db():
             );
         """)
         
-        # Insere uma loja padrão se estiver vazio
-        cur.execute("SELECT COUNT(*) as total FROM lojas;")
-        res = cur.fetchone()
-        if res['total'] == 0:
+        # Verifica se há lojas cadastradas
+        cur.execute("SELECT * FROM lojas;")
+        lojas = cur.fetchall()
+        if not lojas:
             cur.execute("INSERT INTO lojas (nome, cnpj, saldo_caixa) VALUES (%s, %s, %s);", 
                         ("Loja Matriz", "12.345.678/0001-01", 0.00))
         
@@ -51,9 +50,8 @@ def init_db():
         cur.close()
         conn.close()
     except Exception as e:
-        print(f"Erro ao inicializar o banco: {e}")
+        print(f"Erro na inicialização: {e}")
 
-# Executa a criação das tabelas ao iniciar
 init_db()
 
 HTML_TEMPLATE = """
@@ -97,19 +95,20 @@ HTML_TEMPLATE = """
         <div class="nav-lojas">
             <strong>Selecionar Loja:</strong><br><br>
             {% for l in lojas %}
-                <a href="/?loja_id={{ l.id }}" class="{% if l.id == loja_atual.id %}active{% endif %}">
-                    {{ l.nome }} ({{ l.cnpj }})
+                {% set l_id = l.get('id', l.get('loja_id', list(l.keys())[0])) %}
+                <a href="/?loja_id={{ l_id }}" class="{% if l_id|string == loja_atual_id|string %}active{% endif %}">
+                    {{ l.get('nome', 'Loja') }} ({{ l.get('cnpj', 'N/A') }})
                 </a>
             {% endfor %}
         </div>
 
         <div class="card">
             <div>
-                <h3>{{ loja_atual.nome }}</h3>
-                <small>CNPJ: {{ loja_atual.cnpj }}</small>
+                <h3>{{ loja_atual.get('nome', 'Loja') }}</h3>
+                <small>CNPJ: {{ loja_atual.get('cnpj', 'N/A') }}</small>
             </div>
             <div>
-                <h2>Saldo em Caixa: <span style="color: #28a745;">R$ {{ "%.2f"|format(loja_atual.saldo_caixa|float) }}</span></h2>
+                <h2>Saldo em Caixa: <span style="color: #28a745;">R$ {{ "%.2f"|format(loja_atual.get('saldo_caixa', 0)|float) }}</span></h2>
             </div>
         </div>
 
@@ -127,10 +126,10 @@ HTML_TEMPLATE = """
             <tbody>
                 {% for p in produtos %}
                 <tr>
-                    <td><strong>{{ p.codigo }}</strong></td>
-                    <td>{{ p.nome }}</td>
-                    <td>R$ {{ "%.2f"|format(p.preco|float) }}</td>
-                    <td><span style="font-weight:bold; color: {% if p.quantidade < 10 %}#dc3545{% else %}#28a745{% endif %};">{{ p.quantidade }} un</span></td>
+                    <td><strong>{{ p.get('codigo', p.get('id', '')) }}</strong></td>
+                    <td>{{ p.get('nome', '') }}</td>
+                    <td>R$ {{ "%.2f"|format(p.get('preco', 0)|float) }}</td>
+                    <td><span style="font-weight:bold; color: {% if p.get('quantidade', 0) < 10 %}#dc3545{% else %}#28a745{% endif %};">{{ p.get('quantidade', 0) }} un</span></td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -144,14 +143,15 @@ HTML_TEMPLATE = """
             <div class="box-form">
                 <h3>🛒 Registrar Nova Venda</h3>
                 <form action="/vender" method="POST">
-                    <input type="hidden" name="loja_id" value="{{ loja_atual.id }}">
+                    <input type="hidden" name="loja_id" value="{{ loja_atual_id }}">
                     
                     <div class="form-group">
                         <label for="produto_codigo">Selecione o Produto:</label>
                         <select name="produto_codigo" id="produto_codigo" required {% if not produtos %}disabled{% endif %}>
                             {% if produtos %}
                                 {% for p in produtos %}
-                                    <option value="{{ p.codigo }}">{{ p.codigo }} - {{ p.nome }} (R$ {{ "%.2f"|format(p.preco|float) }}) - Restam {{ p.quantidade }} un</option>
+                                    {% set p_cod = p.get('codigo', p.get('id', '')) %}
+                                    <option value="{{ p_cod }}">{{ p_cod }} - {{ p.get('nome', '') }} (R$ {{ "%.2f"|format(p.get('preco', 0)|float) }}) - Restam {{ p.get('quantidade', 0) }} un</option>
                                 {% endfor %}
                             {% else %}
                                 <option>Cadastre um produto primeiro...</option>
@@ -172,7 +172,7 @@ HTML_TEMPLATE = """
             <div class="box-form">
                 <h3>➕ Cadastrar Novo Produto</h3>
                 <form action="/cadastrar_produto" method="POST">
-                    <input type="hidden" name="loja_id" value="{{ loja_atual.id }}">
+                    <input type="hidden" name="loja_id" value="{{ loja_atual_id }}">
                     
                     <div class="form-group">
                         <label for="cad_codigo">Código do Produto (ex: P001):</label>
@@ -223,100 +223,67 @@ HTML_TEMPLATE = """
 
 @app.route("/")
 def index():
-    loja_id_param = request.args.get("loja_id", 1, type=int)
+    loja_id_param = request.args.get("loja_id")
     conn = get_db_connection()
     cur = conn.cursor()
     
-    cur.execute("SELECT * FROM lojas ORDER BY id;")
+    # Busca todas as colunas da tabela lojas sem depender de um nome fixo
+    cur.execute("SELECT * FROM lojas;")
     lojas = cur.fetchall()
+    
+    if not lojas:
+        cur.close()
+        conn.close()
+        return "Nenhuma loja encontrada.", 404
+        
+    primeira_loja = lojas[0]
+    # Identifica dinamicamente a coluna de ID da loja
+    id_col = 'id' if 'id' in primeira_loja else ('loja_id' if 'loja_id' in primeira_loja else list(primeira_loja.keys())[0])
     
     loja_atual = None
     if loja_id_param:
         for l in lojas:
-            if l['id'] == loja_id_param:
+            if str(l.get(id_col)) == str(loja_id_param):
                 loja_atual = l
                 break
                 
-    if not loja_atual and lojas:
+    if not loja_atual:
         loja_atual = lojas[0]
         
-    cur.execute("SELECT * FROM produtos WHERE loja_id = %s ORDER BY id;", (loja_atual['id'],))
-    produtos = cur.fetchall()
+    loja_atual_id = loja_atual.get(id_col)
     
+    # Busca produtos da loja atual
+    try:
+        cur.execute("SELECT * FROM produtos WHERE loja_id = %s;", (loja_atual_id,))
+    except Exception:
+        try:
+            cur.execute("SELECT * FROM produtos;")
+        except Exception:
+            pass
+            
+    produtos = cur.fetchall() if 'produtos' in locals() and isinstance(produtos, list) else []
+    # Garante filtragem em memória caso a coluna loja_id não exista exatamente
+    if produtos and 'loja_id' in produtos[0]:
+        produtos = [p for p in produtos if str(p.get('loja_id')) == str(loja_atual_id)]
+        
     cur.close()
     conn.close()
     
-    return render_template_string(HTML_TEMPLATE, lojas=lojas, loja_atual=loja_atual, produtos=produtos)
+    return render_template_string(HTML_TEMPLATE, lojas=lojas, loja_atual=loja_atual, loja_atual_id=loja_atual_id, produtos=produtos)
 
 @app.route("/vender", methods=["POST"])
 def vender():
-    loja_id = request.form.get("loja_id", type=int)
+    loja_id = request.form.get("loja_id")
     codigo = request.form.get("produto_codigo")
     qtd_venda = request.form.get("quantidade", type=int)
     
-    if not loja_id or not codigo or not qtd_venda or qtd_venda <= 0:
+    if not codigo or not qtd_venda or qtd_venda <= 0:
         return redirect(url_for("index", loja_id=loja_id))
         
     conn = get_db_connection()
     cur = conn.cursor()
     
-    cur.execute("SELECT * FROM produtos WHERE loja_id = %s AND codigo = %s;", (loja_id, codigo))
+    cur.execute("SELECT * FROM produtos WHERE codigo = %s;", (codigo,))
     prod = cur.fetchone()
     
-    if prod and prod['quantidade'] >= qtd_venda:
-        novo_estoque = prod['quantidade'] - qtd_venda
-        valor_total = float(prod['preco']) * qtd_venda
-        
-        cur.execute("UPDATE produtos SET quantidade = %s WHERE id = %s;", (novo_estoque, prod['id']))
-        cur.execute("UPDATE lojas SET saldo_caixa = saldo_caixa + %s WHERE id = %s;", (valor_total, loja_id))
-        conn.commit()
-        
-    cur.close()
-    conn.close()
-    
-    return redirect(url_for("index", loja_id=loja_id))
-
-@app.route("/cadastrar_produto", methods=["POST"])
-def cadastrar_produto():
-    loja_id = request.form.get("loja_id", type=int)
-    codigo = request.form.get("codigo")
-    nome = request.form.get("nome")
-    preco = request.form.get("preco", type=float)
-    quantidade = request.form.get("quantidade", type=int)
-    
-    if loja_id and codigo and nome and preco is not None and quantidade is not None:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        
-        cur.execute(
-            "INSERT INTO produtos (loja_id, codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s, %s);",
-            (loja_id, codigo, nome, preco, quantidade)
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
-        
-    return redirect(url_for("index", loja_id=loja_id))
-
-@app.route("/cadastrar_loja", methods=["POST"])
-def cadastrar_loja():
-    nome = request.form.get("nome")
-    cnpj = request.form.get("cnpj")
-    
-    if nome and cnpj:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        
-        cur.execute(
-            "INSERT INTO lojas (nome, cnpj, saldo_caixa) VALUES (%s, %s, 0.0);",
-            (nome, cnpj)
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
-        
-    return redirect(url_for("index"))
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    if
