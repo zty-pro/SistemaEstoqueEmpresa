@@ -63,6 +63,7 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sistema de Gestão de Estoque</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; color: #333; }
         .container { max-width: 950px; margin: 0 auto; background: white; padding: 25px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
@@ -92,6 +93,7 @@ HTML_TEMPLATE = """
         .nav-lojas a { text-decoration: none; padding: 8px 16px; background: #6c757d; color: white; border-radius: 5px; margin-right: 5px; display: inline-block; margin-bottom: 5px; }
         .nav-lojas a.active { background: #1a73e8; font-weight: bold; }
         .empty-msg { text-align: center; color: #777; padding: 20px; font-style: italic; }
+        .chart-box { background: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 25px; }
     </style>
 </head>
 <body>
@@ -123,6 +125,36 @@ HTML_TEMPLATE = """
             <div>
                 <h2>Saldo em Caixa: <span style="color: #28a745;">R$ {{ "%.2f"|format(loja_atual.get('saldo_caixa', 0)|float) }}</span></h2>
             </div>
+        </div>
+
+        <!-- MÓDULO DE RELATÓRIO E GRÁFICO -->
+        <div class="chart-box">
+            <h3>📊 Relatório de Desempenho de Vendas</h3>
+            {% if grafico_labels and grafico_dados %}
+                <canvas id="vendasChart" style="max-height: 300px;"></canvas>
+                <script>
+                    const ctx = document.getElementById('vendasChart').getContext('2d');
+                    new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: {{ grafico_labels|tojson }},
+                            datasets: [{
+                                label: 'Total Vendido (R$)',
+                                data: {{ grafico_dados|tojson }},
+                                backgroundColor: '#1a73e8',
+                                borderRadius: 5
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: { legend: { display: false } },
+                            scales: { y: { beginAtZero: true } }
+                        }
+                    });
+                </script>
+            {% else %}
+                <div class="empty-msg">Nenhuma venda registrada nesta loja ainda para gerar o gráfico.</div>
+            {% endif %}
         </div>
 
         <h2>Produtos em Estoque</h2>
@@ -300,6 +332,7 @@ def index():
         
     loja_atual_id = loja_atual.get(id_col)
     
+    # Busca produtos da loja
     try:
         cur.execute("SELECT * FROM estoque WHERE loja_id = %s;", (loja_atual_id,))
     except Exception:
@@ -311,7 +344,26 @@ def index():
     produtos = cur.fetchall() if 'produtos' in locals() and isinstance(produtos, list) else []
     if produtos and 'loja_id' in produtos[0]:
         produtos = [p for p in produtos if str(p.get('loja_id')) == str(loja_atual_id)]
-        
+
+    # Dados para o Gráfico de Vendas por Produto
+    grafico_labels = []
+    grafico_dados = []
+    try:
+        cur.execute("""
+            SELECT produto_nome, SUM(valor_total) as total 
+            FROM vendas 
+            WHERE loja_id = %s 
+            GROUP BY produto_nome 
+            ORDER BY total DESC 
+            LIMIT 5;
+        """, (loja_atual_id,))
+        vendas_res = cur.fetchall()
+        for v in vendas_res:
+            grafico_labels.append(v['produto_nome'])
+            grafico_dados.append(float(v['total']))
+    except Exception:
+        pass
+
     cur.close()
     conn.close()
     
@@ -321,6 +373,8 @@ def index():
         loja_atual=loja_atual, 
         loja_atual_id=loja_atual_id, 
         produtos=produtos,
+        grafico_labels=grafico_labels,
+        grafico_dados=grafico_dados,
         usuario_nome=session.get("usuario_nome"),
         usuario_cargo=session.get("usuario_cargo")
     )
@@ -347,17 +401,27 @@ def vender():
         novo_estoque = prod['quantidade'] - qtd_venda
         valor_total = float(prod['preco']) * qtd_venda
         
+        # 1. Atualiza Estoque
         if 'id' in prod:
             cur.execute("UPDATE estoque SET quantidade = %s WHERE id = %s;", (novo_estoque, prod['id']))
         else:
             cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s;", (novo_estoque, codigo))
         
+        # 2. Atualiza Caixa
         try:
             cur.execute("SELECT * FROM lojas LIMIT 1;")
             exemplo_loja = cur.fetchone()
             loja_id_col = 'id' if 'id' in exemplo_loja else ('loja_id' if 'loja_id' in exemplo_loja else list(exemplo_loja.keys())[0])
-            
             cur.execute(f"UPDATE lojas SET saldo_caixa = saldo_caixa + %s WHERE {loja_id_col} = %s;", (valor_total, loja_id))
+        except Exception:
+            pass
+
+        # 3. Registra na tabela de Vendas para Relatórios
+        try:
+            cur.execute(
+                "INSERT INTO vendas (loja_id, produto_codigo, produto_nome, quantidade, valor_total) VALUES (%s, %s, %s, %s, %s);",
+                (loja_id, codigo, prod.get('nome', 'Produto'), qtd_venda, valor_total)
+            )
         except Exception:
             pass
                 
