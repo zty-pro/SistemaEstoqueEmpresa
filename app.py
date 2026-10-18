@@ -227,7 +227,7 @@ HTML_TEMPLATE = """
         <table>
             <thead>
                 <tr>
-                    <th>Código</th>
+                    <th>Código / ID</th>
                     <th>Nome do Produto</th>
                     <th>Preço (R$)</th>
                     <th>Quantidade</th>
@@ -235,8 +235,9 @@ HTML_TEMPLATE = """
             </thead>
             <tbody>
                 {% for p in produtos %}
+                {% set p_identifier = p.get('codigo') if p.get('codigo') else p.get('id') %}
                 <tr>
-                    <td><strong>{{ p.get('codigo', p.get('id', '')) }}</strong></td>
+                    <td><strong>{{ p_identifier }}</strong></td>
                     <td>{{ p.get('nome', '') }}</td>
                     <td>R$ {{ "%.2f"|format(p.get('preco', 0)|float) }}</td>
                     <td><span style="font-weight:bold; color: {% if p.get('quantidade', 0)|int < 10 %}#dc3545{% else %}#28a745{% endif %};">{{ p.get('quantidade', 0) }} un</span></td>
@@ -260,8 +261,8 @@ HTML_TEMPLATE = """
                         <select name="produto_codigo" id="produto_codigo" required {% if not produtos %}disabled{% endif %}>
                             {% if produtos %}
                                 {% for p in produtos %}
-                                    {% set p_cod = p.get('codigo', p.get('id', '')) %}
-                                    <option value="{{ p_cod }}">{{ p_cod }} - {{ p.get('nome', '') }} (R$ {{ "%.2f"|format(p.get('preco', 0)|float) }}) - Restam {{ p.get('quantidade', 0) }} un</option>
+                                    {% set p_identifier = p.get('codigo') if p.get('codigo') else p.get('id') %}
+                                    <option value="{{ p_identifier }}">{{ p_identifier }} - {{ p.get('nome', '') }} (R$ {{ "%.2f"|format(p.get('preco', 0)|float) }}) - Restam {{ p.get('quantidade', 0) }} un</option>
                                 {% endfor %}
                             {% else %}
                                 <option>Cadastre um produto primeiro...</option>
@@ -411,11 +412,11 @@ def index():
         cur.execute("""
             SELECT produto_nome, SUM(valor_total) as total 
             FROM vendas 
-            WHERE str(loja_id) = %s OR loja_id = %s
+            WHERE loja_id::text = %s 
             GROUP BY produto_nome 
             ORDER BY total DESC 
             LIMIT 5;
-        """, (loja_atual_id, int(loja_atual_id) if loja_atual_id.isdigit() else 1))
+        """, (loja_atual_id,))
         vendas_res = cur.fetchall()
         for v in vendas_res:
             grafico_labels.append(v['produto_nome'])
@@ -466,33 +467,37 @@ def vender():
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Procura o produto flexivelmente por 'codigo' ou por 'id'
-    cur.execute("SELECT * FROM estoque WHERE codigo = %s OR id::text = %s;", (codigo, codigo))
+    # Busca robusta do produto no estoque
+    cur.execute("SELECT * FROM estoque WHERE codigo = %s;", (codigo,))
     prod = cur.fetchone()
+    
+    if not prod and codigo.isdigit():
+        cur.execute("SELECT * FROM estoque WHERE id = %s;", (int(codigo),))
+        prod = cur.fetchone()
     
     if prod and int(prod.get('quantidade', 0)) >= qtd_venda:
         novo_estoque = int(prod['quantidade']) - qtd_venda
         valor_total = float(prod['preco']) * qtd_venda
         
-        # 1. Atualiza Estoque
+        # 1. Baixa no estoque
         if 'id' in prod:
             cur.execute("UPDATE estoque SET quantidade = %s WHERE id = %s;", (novo_estoque, prod['id']))
         else:
             cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s;", (novo_estoque, codigo))
         
-        # 2. Atualiza Saldo em Caixa da Loja
+        # 2. Atualiza Saldo do Caixa
         try:
             loja_id_num = int(loja_id) if loja_id and loja_id.isdigit() else 1
             cur.execute("UPDATE lojas SET saldo_caixa = COALESCE(saldo_caixa, 0) + %s WHERE id = %s OR loja_id = %s;", (valor_total, loja_id_num, loja_id_num))
         except Exception:
             conn.rollback()
 
-        # 3. Registra a Venda no Histórico
+        # 3. Registra a Venda na tabela de vendas
         try:
             loja_id_num = int(loja_id) if loja_id and loja_id.isdigit() else 1
             cur.execute(
                 "INSERT INTO vendas (loja_id, produto_codigo, produto_nome, quantidade, valor_total) VALUES (%s, %s, %s, %s, %s);",
-                (loja_id_num, codigo, prod.get('nome', 'Produto'), qtd_venda, valor_total)
+                (loja_id_num, str(codigo), prod.get('nome', 'Produto'), qtd_venda, valor_total)
             )
         except Exception:
             conn.rollback()
