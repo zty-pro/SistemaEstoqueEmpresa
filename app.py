@@ -121,8 +121,7 @@ HTML_TEMPLATE = """
         <div class="nav-lojas">
             <strong>Selecionar Loja:</strong><br><br>
             {% for l in lojas %}
-                {% set l_id = l.get('id', l.get('loja_id', loop.index0)) %}
-                <a href="/?loja_id={{ l_id }}" class="{% if l_id|string == loja_atual_id|string %}active{% endif %}">
+                <a href="/?loja_id={{ l.real_id }}" class="{% if l.real_id|string == loja_atual_id|string %}active{% endif %}">
                     {{ l.get('nome', 'Loja') }} ({{ l.get('cnpj', 'N/A') }})
                 </a>
             {% endfor %}
@@ -193,7 +192,7 @@ HTML_TEMPLATE = """
             {% endif %}
         </div>
 
-        <!-- HISTÓRICO RECENTE DE VENDAS COM BOTÃO DE PDF -->
+        <!-- HISTÓRICO RECENTE DE VENDAS -->
         <h2>📜 Histórico Recente de Vendas</h2>
         {% if ultimas_vendas %}
         <table>
@@ -383,34 +382,31 @@ def index():
         cur.close()
         conn.close()
         return "Nenhuma loja cadastrada.", 404
-        
-    primeira_loja = lojas[0]
-    id_col = 'id' if 'id' in primeira_loja else ('loja_id' if 'loja_id' in primeira_loja else list(primeira_loja.keys())[0])
-    
+
+    # Identifica o ID real de cada loja (seja 'id' ou 'loja_id')
+    for l in lojas:
+        l['real_id'] = l.get('id', l.get('loja_id'))
+
     loja_atual = None
     if loja_id_param:
         for l in lojas:
-            if str(l.get(id_col)) == str(loja_id_param):
+            if str(l['real_id']) == str(loja_id_param):
                 loja_atual = l
                 break
                 
     if not loja_atual:
         loja_atual = lojas[0]
         
-    loja_atual_id = loja_atual.get(id_col)
+    loja_atual_id = loja_atual['real_id']
     
-    # Busca produtos da loja
-    try:
-        cur.execute("SELECT * FROM estoque WHERE loja_id = %s;", (loja_atual_id,))
-    except Exception:
-        try:
-            cur.execute("SELECT * FROM estoque;")
-        except Exception:
-            pass
-            
-    produtos = cur.fetchall() if 'produtos' in locals() and isinstance(produtos, list) else []
-    if produtos and 'loja_id' in produtos[0]:
-        produtos = [p for p in produtos if str(p.get('loja_id')) == str(loja_atual_id)]
+    # Busca produtos da loja atual com filtro resiliente
+    cur.execute("SELECT * FROM estoque;")
+    todos_produtos = cur.fetchall()
+    produtos = []
+    for p in todos_produtos:
+        p_loja = p.get('loja_id')
+        if p_loja is None or str(p_loja) == str(loja_atual_id):
+            produtos.append(p)
 
     # Gráfico de Vendas
     grafico_labels = []
@@ -431,7 +427,7 @@ def index():
     except Exception:
         pass
 
-    # Histórico recente de vendas para listagem e emissão de PDF
+    # Histórico recente de vendas
     ultimas_vendas = []
     try:
         cur.execute("""
@@ -461,6 +457,44 @@ def index():
         usuario_cargo=session.get("usuario_cargo")
     )
 
+@app.route("/cadastrar_produto", methods=["POST"])
+def cadastrar_produto():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    loja_id = request.form.get("loja_id")
+    codigo = request.form.get("codigo")
+    nome = request.form.get("nome")
+    preco = request.form.get("preco", type=float)
+    quantidade = request.form.get("quantidade", type=int)
+    
+    if codigo and nome and preco is not None and quantidade is not None:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        try:
+            # Tenta gravar associando à loja
+            cur.execute(
+                "INSERT INTO estoque (loja_id, codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s, %s);",
+                (int(loja_id) if loja_id else 1, codigo, nome, preco, quantidade)
+            )
+        except Exception:
+            conn.rollback()
+            try:
+                # Fallback para estruturas de tabela simplificadas
+                cur.execute(
+                    "INSERT INTO estoque (codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s);",
+                    (codigo, nome, preco, quantidade)
+                )
+            except Exception:
+                conn.rollback()
+            
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+    return redirect(url_for("index", loja_id=loja_id))
+
 @app.route("/comprovante_pdf/<int:venda_id>")
 def comprovante_pdf(venda_id):
     if "usuario_id" not in session:
@@ -477,7 +511,6 @@ def comprovante_pdf(venda_id):
         conn.close()
         return "Comprovante não encontrado.", 404
         
-    # Busca dados da loja correspondente
     cur.execute("SELECT * FROM lojas WHERE id = %s OR loja_id = %s LIMIT 1;", (venda['loja_id'], venda['loja_id']))
     loja = cur.fetchone()
     cur.close()
@@ -486,12 +519,10 @@ def comprovante_pdf(venda_id):
     loja_nome = loja.get('nome', 'Empresa / Loja') if loja else 'Sistema de Estoque'
     loja_cnpj = loja.get('cnpj', 'N/A') if loja else 'N/A'
     
-    # Criação do PDF em memória usando ReportLab
     buffer = io.BytesIO()
     p = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
     
-    # Cabeçalho do Recibo
     p.setFont("Helvetica-Bold", 16)
     p.drawString(50, height - 50, f"COMPROVANTE DE VENDA")
     
@@ -504,7 +535,6 @@ def comprovante_pdf(venda_id):
     p.setLineWidth(1)
     p.line(50, height - 130, width - 50, height - 130)
     
-    # Detalhes do Item
     p.setFont("Helvetica-Bold", 12)
     p.drawString(50, height - 160, "Item Adquirido:")
     
@@ -515,7 +545,6 @@ def comprovante_pdf(venda_id):
     
     p.line(50, height - 250, width - 50, height - 250)
     
-    # Rodapé
     p.setFont("Helvetica-Oblique", 9)
     p.drawString(50, height - 280, "Documento gerado eletronicamente pelo Sistema de Gestão de Estoque & Caixa.")
     p.drawString(50, height - 295, "Obrigado pela preferência!")
@@ -535,11 +564,7 @@ def exportar_estoque():
     conn = get_db_connection()
     cur = conn.cursor()
     
-    try:
-        cur.execute("SELECT codigo, nome, preco, quantidade FROM estoque WHERE loja_id = %s;", (loja_id,))
-    except Exception:
-        cur.execute("SELECT codigo, nome, preco, quantidade FROM estoque;")
-        
+    cur.execute("SELECT codigo, nome, preco, quantidade FROM estoque;")
     produtos = cur.fetchall()
     cur.close()
     conn.close()
@@ -583,16 +608,17 @@ def importar_estoque():
                 try:
                     cur.execute(
                         "INSERT INTO estoque (loja_id, codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s, %s);",
-                        (loja_id, codigo, nome, preco, quantidade)
+                        (int(loja_id) if loja_id else 1, codigo, nome, preco, quantidade)
                     )
                 except Exception:
+                    conn.rollback()
                     try:
                         cur.execute(
                             "INSERT INTO estoque (codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s);",
                             (codigo, nome, preco, quantidade)
                         )
                     except Exception:
-                        pass
+                        conn.rollback()
                         
         conn.commit()
         cur.close()
@@ -633,56 +659,21 @@ def vender():
             loja_id_col = 'id' if 'id' in exemplo_loja else ('loja_id' if 'loja_id' in exemplo_loja else list(exemplo_loja.keys())[0])
             cur.execute(f"UPDATE lojas SET saldo_caixa = saldo_caixa + %s WHERE {loja_id_col} = %s;", (valor_total, loja_id))
         except Exception:
-            pass
+            conn.rollback()
 
         try:
             cur.execute(
                 "INSERT INTO vendas (loja_id, produto_codigo, produto_nome, quantidade, valor_total) VALUES (%s, %s, %s, %s, %s);",
-                (loja_id, codigo, prod.get('nome', 'Produto'), qtd_venda, valor_total)
+                (int(loja_id) if loja_id else 1, codigo, prod.get('nome', 'Produto'), qtd_venda, valor_total)
             )
         except Exception:
-            pass
+            conn.rollback()
                 
         conn.commit()
         
     cur.close()
     conn.close()
     
-    return redirect(url_for("index", loja_id=loja_id))
-
-@app.route("/cadastrar_produto", methods=["POST"])
-def cadastrar_produto():
-    if "usuario_id" not in session:
-        return redirect(url_for("login"))
-        
-    loja_id = request.form.get("loja_id")
-    codigo = request.form.get("codigo")
-    nome = request.form.get("nome")
-    preco = request.form.get("preco", type=float)
-    quantidade = request.form.get("quantidade", type=int)
-    
-    if codigo and nome and preco is not None and quantidade is not None:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        
-        try:
-            cur.execute(
-                "INSERT INTO estoque (loja_id, codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s, %s);",
-                (loja_id, codigo, nome, preco, quantidade)
-            )
-        except Exception:
-            try:
-                cur.execute(
-                    "INSERT INTO estoque (codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s);",
-                    (codigo, nome, preco, quantidade)
-                )
-            except Exception:
-                pass
-            
-        conn.commit()
-        cur.close()
-        conn.close()
-        
     return redirect(url_for("index", loja_id=loja_id))
 
 @app.route("/cadastrar_loja", methods=["POST"])
@@ -703,13 +694,14 @@ def cadastrar_loja():
                 (nome, cnpj)
             )
         except Exception:
+            conn.rollback()
             try:
                 cur.execute(
                     "INSERT INTO lojas (nome, cnpj) VALUES (%s, %s);",
                     (nome, cnpj)
                 )
             except Exception:
-                pass
+                conn.rollback()
             
         conn.commit()
         cur.close()
