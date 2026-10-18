@@ -347,4 +347,94 @@ def vender():
         novo_estoque = prod['quantidade'] - qtd_venda
         valor_total = float(prod['preco']) * qtd_venda
         
-        if 'id'
+        if 'id' in prod:
+            cur.execute("UPDATE estoque SET quantidade = %s WHERE id = %s;", (novo_estoque, prod['id']))
+        else:
+            cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s;", (novo_estoque, codigo))
+        
+        try:
+            cur.execute("SELECT * FROM lojas LIMIT 1;")
+            exemplo_loja = cur.fetchone()
+            loja_id_col = 'id' if 'id' in exemplo_loja else ('loja_id' if 'loja_id' in exemplo_loja else list(exemplo_loja.keys())[0])
+            
+            cur.execute(f"UPDATE lojas SET saldo_caixa = saldo_caixa + %s WHERE {loja_id_col} = %s;", (valor_total, loja_id))
+        except Exception:
+            pass
+                
+        conn.commit()
+        
+    cur.close()
+    conn.close()
+    
+    return redirect(url_for("index", loja_id=loja_id))
+
+@app.route("/cadastrar_produto", methods=["POST"])
+def cadastrar_produto():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    loja_id = request.form.get("loja_id")
+    codigo = request.form.get("codigo")
+    nome = request.form.get("nome")
+    preco = request.form.get("preco", type=float)
+    quantidade = request.form.get("quantidade", type=int)
+    
+    if codigo and nome and preco is not None and quantidade is not None:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        try:
+            cur.execute(
+                "INSERT INTO estoque (loja_id, codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s, %s);",
+                (loja_id, codigo, nome, preco, quantidade)
+            )
+        except Exception:
+            try:
+                cur.execute(
+                    "INSERT INTO estoque (codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s);",
+                    (codigo, nome, preco, quantidade)
+                )
+            except Exception:
+                pass
+            
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+    return redirect(url_for("index", loja_id=loja_id))
+
+@app.route("/cadastrar_loja", methods=["POST"])
+def cadastrar_loja():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    nome = request.form.get("nome")
+    cnpj = request.form.get("cnpj")
+    
+    if nome and cnpj:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        try:
+            cur.execute(
+                "INSERT INTO lojas (nome, cnpj, saldo_caixa) VALUES (%s, %s, 0.0);",
+                (nome, cnpj)
+            )
+        except Exception:
+            try:
+                cur.execute(
+                    "INSERT INTO lojas (nome, cnpj) VALUES (%s, %s);",
+                    (nome, cnpj)
+                )
+            except Exception:
+                pass
+            
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+    return redirect(url_for("index"))
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
