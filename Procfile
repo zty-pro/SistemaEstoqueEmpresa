@@ -1,1 +1,1 @@
-web: python estoque.py
+web: gunicorn app:app
