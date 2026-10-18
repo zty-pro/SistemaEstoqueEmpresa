@@ -1,10 +1,14 @@
 import os
 import csv
 import io
-from flask import Flask, render_template_string, request, redirect, url_for, session, Response
+from flask import Flask, render_template_string, request, redirect, url_for, session, Response, send_file
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
+
+# Importações para o gerador de PDF
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
 
 load_dotenv()
 
@@ -93,6 +97,8 @@ HTML_TEMPLATE = """
         button.btn-cadastrar:hover { background-color: #1557b0; }
         .btn-excel { background-color: #17a2b8; color: white; text-decoration: none; padding: 8px 14px; border-radius: 5px; font-size: 13px; font-weight: bold; display: inline-block; margin-right: 5px; }
         .btn-excel:hover { background-color: #138496; }
+        .btn-pdf { background-color: #ffc107; color: #333; text-decoration: none; padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+        .btn-pdf:hover { background-color: #e0a800; }
         .nav-lojas { margin-bottom: 20px; }
         .nav-lojas a { text-decoration: none; padding: 8px 16px; background: #6c757d; color: white; border-radius: 5px; margin-right: 5px; display: inline-block; margin-bottom: 5px; }
         .nav-lojas a.active { background: #1a73e8; font-weight: bold; }
@@ -132,7 +138,7 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- MÓDULO DE EXPORTAÇÃO E IMPORTAÇÃO EXCEL/CSV -->
+        <!-- EXPORTAÇÃO E IMPORTAÇÃO -->
         <div class="excel-actions">
             <div>
                 <strong>Gerir Produtos por Planilha:</strong><br>
@@ -186,6 +192,37 @@ HTML_TEMPLATE = """
                 <div class="empty-msg">Nenhuma venda registrada nesta loja ainda para gerar o gráfico.</div>
             {% endif %}
         </div>
+
+        <!-- HISTÓRICO RECENTE DE VENDAS COM BOTÃO DE PDF -->
+        <h2>📜 Histórico Recente de Vendas</h2>
+        {% if ultimas_vendas %}
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Produto</th>
+                    <th>Qtd</th>
+                    <th>Total (R$)</th>
+                    <th>Data/Hora</th>
+                    <th>Ação</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for v in ultimas_vendas %}
+                <tr>
+                    <td>#{{ v.get('id') }}</td>
+                    <td>{{ v.get('produto_nome') }}</td>
+                    <td>{{ v.get('quantidade') }} un</td>
+                    <td>R$ {{ "%.2f"|format(v.get('valor_total', 0)|float) }}</td>
+                    <td>{{ v.get('data_venda') }}</td>
+                    <td><a href="/comprovante_pdf/{{ v.get('id') }}" target="_blank" class="btn-pdf">📄 Baixar PDF</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+            <div class="empty-msg">Nenhuma venda efetuada recentemente.</div>
+        {% endif %}
 
         <h2>Produtos em Estoque</h2>
         {% if produtos %}
@@ -394,6 +431,20 @@ def index():
     except Exception:
         pass
 
+    # Histórico recente de vendas para listagem e emissão de PDF
+    ultimas_vendas = []
+    try:
+        cur.execute("""
+            SELECT id, produto_nome, quantidade, valor_total, data_venda 
+            FROM vendas 
+            WHERE loja_id = %s 
+            ORDER BY id DESC 
+            LIMIT 10;
+        """, (loja_atual_id,))
+        ultimas_vendas = cur.fetchall()
+    except Exception:
+        pass
+
     cur.close()
     conn.close()
     
@@ -405,9 +456,75 @@ def index():
         produtos=produtos,
         grafico_labels=grafico_labels,
         grafico_dados=grafico_dados,
+        ultimas_vendas=ultimas_vendas,
         usuario_nome=session.get("usuario_nome"),
         usuario_cargo=session.get("usuario_cargo")
     )
+
+@app.route("/comprovante_pdf/<int:venda_id>")
+def comprovante_pdf(venda_id):
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    cur.execute("SELECT * FROM vendas WHERE id = %s;", (venda_id,))
+    venda = cur.fetchone()
+    
+    if not venda:
+        cur.close()
+        conn.close()
+        return "Comprovante não encontrado.", 404
+        
+    # Busca dados da loja correspondente
+    cur.execute("SELECT * FROM lojas WHERE id = %s OR loja_id = %s LIMIT 1;", (venda['loja_id'], venda['loja_id']))
+    loja = cur.fetchone()
+    cur.close()
+    conn.close()
+    
+    loja_nome = loja.get('nome', 'Empresa / Loja') if loja else 'Sistema de Estoque'
+    loja_cnpj = loja.get('cnpj', 'N/A') if loja else 'N/A'
+    
+    # Criação do PDF em memória usando ReportLab
+    buffer = io.BytesIO()
+    p = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    
+    # Cabeçalho do Recibo
+    p.setFont("Helvetica-Bold", 16)
+    p.drawString(50, height - 50, f"COMPROVANTE DE VENDA")
+    
+    p.setFont("Helvetica", 11)
+    p.drawString(50, height - 75, f"Loja: {loja_nome} | CNPJ: {loja_cnpj}")
+    p.drawString(50, height - 95, f"Transação ID: #{venda['id']}")
+    p.drawString(50, height - 115, f"Data e Hora: {venda['data_venda']}")
+    
+    p.setStrokeColorRGB(0.2, 0.4, 0.8)
+    p.setLineWidth(1)
+    p.line(50, height - 130, width - 50, height - 130)
+    
+    # Detalhes do Item
+    p.setFont("Helvetica-Bold", 12)
+    p.drawString(50, height - 160, "Item Adquirido:")
+    
+    p.setFont("Helvetica", 11)
+    p.drawString(70, height - 185, f"Produto: {venda['produto_nome']} (Cód: {venda['produto_codigo']})")
+    p.drawString(70, height - 205, f"Quantidade: {venda['quantidade']} unidade(s)")
+    p.drawString(70, height - 225, f"Valor Total: R$ {float(venda['valor_total']):.2f}")
+    
+    p.line(50, height - 250, width - 50, height - 250)
+    
+    # Rodapé
+    p.setFont("Helvetica-Oblique", 9)
+    p.drawString(50, height - 280, "Documento gerado eletronicamente pelo Sistema de Gestão de Estoque & Caixa.")
+    p.drawString(50, height - 295, "Obrigado pela preferência!")
+    
+    p.showPage()
+    p.save()
+    
+    buffer.seek(0)
+    return send_file(buffer, as_attachment=True, download_name=f"comprovante_venda_{venda_id}.pdf", mimetype="application/pdf")
 
 @app.route("/exportar_estoque")
 def exportar_estoque():
