@@ -21,7 +21,7 @@ HTML_TEMPLATE = """
     <title>Sistema de Gestão de Estoque</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; color: #333; }
-        .container { max-width: 950px; margin: 0 auto; background: white; padding: 25px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 25px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
         h1 { color: #1a73e8; margin-top: 0; }
         .card { background: #eef3fc; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
         .card h3 { margin: 0; }
@@ -44,6 +44,8 @@ HTML_TEMPLATE = """
         .nav-lojas a { text-decoration: none; padding: 8px 16px; background: #6c757d; color: white; border-radius: 5px; margin-right: 5px; display: inline-block; margin-bottom: 5px; }
         .nav-lojas a.active { background: #1a73e8; font-weight: bold; }
         .empty-msg { text-align: center; color: #777; padding: 20px; font-style: italic; }
+        .relatorio-section { margin-top: 30px; background: #fff3cd; padding: 20px; border-radius: 8px; border: 1px solid #ffeeba; }
+        .relatorio-section h3 { margin-top: 0; color: #856404; }
     </style>
 </head>
 <body>
@@ -53,7 +55,7 @@ HTML_TEMPLATE = """
         <div class="nav-lojas">
             <strong>Selecionar Loja:</strong><br><br>
             {% for l in lojas %}
-                {% set l_id = l.get('id', l.get('loja_id', loop.index0)) %}
+                {% set l_id = l.get('id', l.get('loja_id')) %}
                 <a href="/?loja_id={{ l_id }}" class="{% if l_id|string == loja_atual_id|string %}active{% endif %}">
                     {{ l.get('nome', 'Loja') }} ({{ l.get('cnpj', 'N/A') }})
                 </a>
@@ -148,7 +150,7 @@ HTML_TEMPLATE = """
                     </div>
 
                     <div class="form-group">
-                        <label for="cad_qtd">Quantidade Inicial em Estoque:</label>
+                        <labelfor="cad_qtd">Quantidade Inicial em Estoque:</label>
                         <input type="number" id="cad_qtd" name="quantidade" min="0" value="10" required>
                     </div>
 
@@ -173,6 +175,14 @@ HTML_TEMPLATE = """
                     <button type="submit" class="btn-cadastrar">Cadastrar Nova Loja</button>
                 </div>
             </form>
+        </div>
+
+        <!-- RELATÓRIO GERAL -->
+        <div class="relatorio-section">
+            <h3>📊 Relatório Consolidado Geral</h3>
+            <p><strong>Total de Lojas Cadastradas:</strong> {{ lojas|length }}</p>
+            <p><strong>Saldo Total em Caixa (Todas as Lojas):</strong> R$ {{ "%.2f"|format(total_caixa|float) }}</p>
+            <p><strong>Total de Itens em Estoque na Loja Atual:</strong> {{ produtos|sum(attribute='quantidade') }} unidades</p>
         </div>
     </div>
 </body>
@@ -208,6 +218,7 @@ def index():
         
     loja_atual_id = loja_atual.get(id_col)
     
+    # Busca produtos da loja atual
     try:
         cur.execute("SELECT * FROM estoque WHERE loja_id = %s;", (loja_atual_id,))
     except Exception:
@@ -220,10 +231,20 @@ def index():
     if produtos and 'loja_id' in produtos[0]:
         produtos = [p for p in produtos if str(p.get('loja_id')) == str(loja_atual_id)]
         
+    # Calcula saldo total em caixa de todas as lojas para o relatório
+    total_caixa = sum([float(l.get('saldo_caixa', 0) or 0) for l in lojas])
+        
     cur.close()
     conn.close()
     
-    return render_template_string(HTML_TEMPLATE, lojas=lojas, loja_atual=loja_atual, loja_atual_id=loja_atual_id, produtos=produtos)
+    return render_template_string(
+        HTML_TEMPLATE, 
+        lojas=lojas, 
+        loja_atual=loja_atual, 
+        loja_atual_id=loja_atual_id, 
+        produtos=produtos,
+        total_caixa=total_caixa
+    )
 
 @app.route("/vender", methods=["POST"])
 def vender():
@@ -238,7 +259,7 @@ def vender():
     cur = conn.cursor()
     
     try:
-        # Busca o produto por código e loja, ou fallback apenas por código
+        # Busca o produto exato
         if loja_id:
             try:
                 cur.execute("SELECT * FROM estoque WHERE codigo = %s AND loja_id = %s;", (str(codigo).strip(), loja_id))
@@ -256,13 +277,13 @@ def vender():
             novo_estoque = int(prod['quantidade']) - qtd_venda
             valor_total = float(prod.get('preco', 0)) * qtd_venda
             
-            # Atualiza estoque
+            # Atualiza o estoque
             if 'id' in prod and prod['id']:
                 cur.execute("UPDATE estoque SET quantidade = %s WHERE id = %s;", (novo_estoque, prod['id']))
             else:
                 cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s;", (novo_estoque, str(codigo).strip()))
             
-            # Atualiza saldo de caixa da loja
+            # Atualiza o saldo em caixa da loja
             if loja_id:
                 try:
                     cur.execute("SELECT * FROM lojas LIMIT 1;")
