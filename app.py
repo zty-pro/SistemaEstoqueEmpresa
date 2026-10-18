@@ -6,7 +6,6 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
-# Importações para o gerador de PDF
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
@@ -240,7 +239,7 @@ HTML_TEMPLATE = """
                     <td><strong>{{ p.get('codigo', p.get('id', '')) }}</strong></td>
                     <td>{{ p.get('nome', '') }}</td>
                     <td>R$ {{ "%.2f"|format(p.get('preco', 0)|float) }}</td>
-                    <td><span style="font-weight:bold; color: {% if p.get('quantidade', 0) < 10 %}#dc3545{% else %}#28a745{% endif %};">{{ p.get('quantidade', 0) }} un</span></td>
+                    <td><span style="font-weight:bold; color: {% if p.get('quantidade', 0)|int < 10 %}#dc3545{% else %}#28a745{% endif %};">{{ p.get('quantidade', 0) }} un</span></td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -383,9 +382,8 @@ def index():
         conn.close()
         return "Nenhuma loja cadastrada.", 404
 
-    # Identifica o ID real de cada loja (seja 'id' ou 'loja_id')
-    for l in lojas:
-        l['real_id'] = l.get('id', l.get('loja_id'))
+    for idx, l in enumerate(lojas):
+        l['real_id'] = str(l.get('id', l.get('loja_id', idx + 1)))
 
     loja_atual = None
     if loja_id_param:
@@ -397,29 +395,27 @@ def index():
     if not loja_atual:
         loja_atual = lojas[0]
         
-    loja_atual_id = loja_atual['real_id']
+    loja_atual_id = str(loja_atual['real_id'])
     
-    # Busca produtos da loja atual com filtro resiliente
     cur.execute("SELECT * FROM estoque;")
     todos_produtos = cur.fetchall()
     produtos = []
     for p in todos_produtos:
-        p_loja = p.get('loja_id')
-        if p_loja is None or str(p_loja) == str(loja_atual_id):
+        p_loja = str(p.get('loja_id', ''))
+        if not p_loja or p_loja == loja_atual_id or p_loja == 'None':
             produtos.append(p)
 
-    # Gráfico de Vendas
     grafico_labels = []
     grafico_dados = []
     try:
         cur.execute("""
             SELECT produto_nome, SUM(valor_total) as total 
             FROM vendas 
-            WHERE loja_id = %s 
+            WHERE str(loja_id) = %s OR loja_id = %s
             GROUP BY produto_nome 
             ORDER BY total DESC 
             LIMIT 5;
-        """, (loja_atual_id,))
+        """, (loja_atual_id, int(loja_atual_id) if loja_atual_id.isdigit() else 1))
         vendas_res = cur.fetchall()
         for v in vendas_res:
             grafico_labels.append(v['produto_nome'])
@@ -427,16 +423,14 @@ def index():
     except Exception:
         pass
 
-    # Histórico recente de vendas
     ultimas_vendas = []
     try:
         cur.execute("""
             SELECT id, produto_nome, quantidade, valor_total, data_venda 
             FROM vendas 
-            WHERE loja_id = %s 
             ORDER BY id DESC 
             LIMIT 10;
-        """, (loja_atual_id,))
+        """)
         ultimas_vendas = cur.fetchall()
     except Exception:
         pass
@@ -457,6 +451,59 @@ def index():
         usuario_cargo=session.get("usuario_cargo")
     )
 
+@app.route("/vender", methods=["POST"])
+def vender():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    loja_id = request.form.get("loja_id")
+    codigo = request.form.get("produto_codigo")
+    qtd_venda = request.form.get("quantidade", type=int)
+    
+    if not codigo or not qtd_venda or qtd_venda <= 0:
+        return redirect(url_for("index", loja_id=loja_id))
+        
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Procura o produto flexivelmente por 'codigo' ou por 'id'
+    cur.execute("SELECT * FROM estoque WHERE codigo = %s OR id::text = %s;", (codigo, codigo))
+    prod = cur.fetchone()
+    
+    if prod and int(prod.get('quantidade', 0)) >= qtd_venda:
+        novo_estoque = int(prod['quantidade']) - qtd_venda
+        valor_total = float(prod['preco']) * qtd_venda
+        
+        # 1. Atualiza Estoque
+        if 'id' in prod:
+            cur.execute("UPDATE estoque SET quantidade = %s WHERE id = %s;", (novo_estoque, prod['id']))
+        else:
+            cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s;", (novo_estoque, codigo))
+        
+        # 2. Atualiza Saldo em Caixa da Loja
+        try:
+            loja_id_num = int(loja_id) if loja_id and loja_id.isdigit() else 1
+            cur.execute("UPDATE lojas SET saldo_caixa = COALESCE(saldo_caixa, 0) + %s WHERE id = %s OR loja_id = %s;", (valor_total, loja_id_num, loja_id_num))
+        except Exception:
+            conn.rollback()
+
+        # 3. Registra a Venda no Histórico
+        try:
+            loja_id_num = int(loja_id) if loja_id and loja_id.isdigit() else 1
+            cur.execute(
+                "INSERT INTO vendas (loja_id, produto_codigo, produto_nome, quantidade, valor_total) VALUES (%s, %s, %s, %s, %s);",
+                (loja_id_num, codigo, prod.get('nome', 'Produto'), qtd_venda, valor_total)
+            )
+        except Exception:
+            conn.rollback()
+                
+        conn.commit()
+        
+    cur.close()
+    conn.close()
+    
+    return redirect(url_for("index", loja_id=loja_id))
+
 @app.route("/cadastrar_produto", methods=["POST"])
 def cadastrar_produto():
     if "usuario_id" not in session:
@@ -472,16 +519,15 @@ def cadastrar_produto():
         conn = get_db_connection()
         cur = conn.cursor()
         
+        loja_id_num = int(loja_id) if loja_id and loja_id.isdigit() else 1
         try:
-            # Tenta gravar associando à loja
             cur.execute(
                 "INSERT INTO estoque (loja_id, codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s, %s);",
-                (int(loja_id) if loja_id else 1, codigo, nome, preco, quantidade)
+                (loja_id_num, codigo, nome, preco, quantidade)
             )
         except Exception:
             conn.rollback()
             try:
-                # Fallback para estruturas de tabela simplificadas
                 cur.execute(
                     "INSERT INTO estoque (codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s);",
                     (codigo, nome, preco, quantidade)
@@ -597,6 +643,7 @@ def importar_estoque():
         
         conn = get_db_connection()
         cur = conn.cursor()
+        loja_id_num = int(loja_id) if loja_id and loja_id.isdigit() else 1
         
         for row in reader:
             codigo = row.get('codigo')
@@ -608,7 +655,7 @@ def importar_estoque():
                 try:
                     cur.execute(
                         "INSERT INTO estoque (loja_id, codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s, %s);",
-                        (int(loja_id) if loja_id else 1, codigo, nome, preco, quantidade)
+                        (loja_id_num, codigo, nome, preco, quantidade)
                     )
                 except Exception:
                     conn.rollback()
@@ -624,56 +671,6 @@ def importar_estoque():
         cur.close()
         conn.close()
         
-    return redirect(url_for("index", loja_id=loja_id))
-
-@app.route("/vender", methods=["POST"])
-def vender():
-    if "usuario_id" not in session:
-        return redirect(url_for("login"))
-        
-    loja_id = request.form.get("loja_id")
-    codigo = request.form.get("produto_codigo")
-    qtd_venda = request.form.get("quantidade", type=int)
-    
-    if not codigo or not qtd_venda or qtd_venda <= 0:
-        return redirect(url_for("index", loja_id=loja_id))
-        
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    cur.execute("SELECT * FROM estoque WHERE codigo = %s;", (codigo,))
-    prod = cur.fetchone()
-    
-    if prod and prod.get('quantidade', 0) >= qtd_venda:
-        novo_estoque = prod['quantidade'] - qtd_venda
-        valor_total = float(prod['preco']) * qtd_venda
-        
-        if 'id' in prod:
-            cur.execute("UPDATE estoque SET quantidade = %s WHERE id = %s;", (novo_estoque, prod['id']))
-        else:
-            cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s;", (novo_estoque, codigo))
-        
-        try:
-            cur.execute("SELECT * FROM lojas LIMIT 1;")
-            exemplo_loja = cur.fetchone()
-            loja_id_col = 'id' if 'id' in exemplo_loja else ('loja_id' if 'loja_id' in exemplo_loja else list(exemplo_loja.keys())[0])
-            cur.execute(f"UPDATE lojas SET saldo_caixa = saldo_caixa + %s WHERE {loja_id_col} = %s;", (valor_total, loja_id))
-        except Exception:
-            conn.rollback()
-
-        try:
-            cur.execute(
-                "INSERT INTO vendas (loja_id, produto_codigo, produto_nome, quantidade, valor_total) VALUES (%s, %s, %s, %s, %s);",
-                (int(loja_id) if loja_id else 1, codigo, prod.get('nome', 'Produto'), qtd_venda, valor_total)
-            )
-        except Exception:
-            conn.rollback()
-                
-        conn.commit()
-        
-    cur.close()
-    conn.close()
-    
     return redirect(url_for("index", loja_id=loja_id))
 
 @app.route("/cadastrar_loja", methods=["POST"])
