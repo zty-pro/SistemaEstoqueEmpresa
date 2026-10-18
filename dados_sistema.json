@@ -1,0 +1,36 @@
+{
+    "lojas": {
+        "12.345.678/0001-01": {
+            "nome": "Loja Matriz",
+            "caixa": 119.69999999999999,
+            "estoque": {
+                "P001": {
+                    "nome": "Camiseta Básica",
+                    "quantidade": 47,
+                    "preco": 39.9
+                },
+                "P002": {
+                    "nome": "Calça Jeans",
+                    "quantidade": 30,
+                    "preco": 89.9
+                }
+            }
+        },
+        "12.345.678/0002-02": {
+            "nome": "Filial Shopping",
+            "caixa": 0.0,
+            "estoque": {
+                "P001": {
+                    "nome": "Camiseta Básica",
+                    "quantidade": 20,
+                    "preco": 39.9
+                },
+                "P003": {
+                    "nome": "Tênis Esportivo",
+                    "quantidade": 15,
+                    "preco": 149.9
+                }
+            }
+        }
+    }
+}
