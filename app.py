@@ -709,4 +709,50 @@ def importar_estoque():
                     try:
                         cur.execute(
                             "INSERT INTO estoque (codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s);",
-                            (codigo, nome,
+                            (codigo, nome, preco, quantidade)
+                        )
+                    except Exception:
+                        conn.rollback()
+                        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+    return redirect(url_for("index", loja_id=loja_id))
+
+@app.route("/cadastrar_loja", methods=["POST"])
+def cadastrar_loja():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    nome = request.form.get("nome")
+    cnpj = request.form.get("cnpj")
+    
+    if nome and cnpj:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        try:
+            cur.execute(
+                "INSERT INTO lojas (nome, cnpj, saldo_caixa) VALUES (%s, %s, 0.0);",
+                (nome, cnpj)
+            )
+        except Exception:
+            conn.rollback()
+            try:
+                cur.execute(
+                    "INSERT INTO lojas (nome, cnpj) VALUES (%s, %s);",
+                    (nome, cnpj)
+                )
+            except Exception:
+                conn.rollback()
+            
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+    return redirect(url_for("index"))
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
