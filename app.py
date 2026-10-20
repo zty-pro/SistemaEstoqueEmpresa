@@ -255,7 +255,7 @@ HTML_TEMPLATE = """
                                 <input type="number" name="nova_quantidade" value="{{ p.get('quantidade', 0) }}" min="0" class="input-qtd-ajuste" required>
                                 <button type="submit" class="btn-salvar-qtd" title="Atualizar quantidade">✏️ Salvar</button>
                             </form>
-                            <a href="/excluir_produto?codigo={{ p_cod }}&loja_id={{ loja_atual_id }}" class="btn-excluir-prod" onclick="return confirm('Deseja realmente excluir este produto do estoque?');" title="Excluir produto">🗑️ Excluir</a>
+                            <a href="/excluir_produto?codigo={{ p_cod }}&loja_id={{ loja_atual_id }}" class="btn-excluir-prod" onclick="return confirm('Deseja realmente excluir este produto desta filial?');" title="Excluir produto">🗑️ Excluir</a>
                         </div>
                     </td>
                 </tr>
@@ -322,7 +322,7 @@ HTML_TEMPLATE = """
                         <input type="number" id="cad_qtd" name="quantidade" min="0" value="10" required>
                     </div>
 
-                    <button type="submit" class="btn-cadastrar">Cadastrar Produto no Banco</button>
+                    <button type="submit" class="btn-cadastrar">Cadastrar Produto nesta Filial</button>
                 </form>
             </div>
         </div>
@@ -423,13 +423,16 @@ def index():
     except Exception:
         pass
     
-    cur.execute("SELECT * FROM estoque;")
-    todos_produtos = cur.fetchall()
+    # Busca estritamente produtos da loja selecionada
     produtos = []
-    for p in todos_produtos:
-        p_loja = str(p.get('loja_id', ''))
-        if not p_loja or p_loja == loja_atual_id or p_loja == 'None':
-            produtos.append(p)
+    try:
+        cur.execute("SELECT * FROM estoque WHERE loja_id::text = %s;", (loja_atual_id,))
+        produtos = cur.fetchall()
+    except Exception:
+        conn.rollback()
+        cur.execute("SELECT * FROM estoque;")
+        todos = cur.fetchall()
+        produtos = [p for p in todos if str(p.get('loja_id', '')) == loja_atual_id]
 
     grafico_labels = []
     grafico_dados = []
@@ -492,16 +495,15 @@ def editar_estoque():
         cur = conn.cursor()
         
         try:
-            cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s;", (nova_qtd, str(codigo)))
+            cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s AND loja_id::text = %s;", (nova_qtd, str(codigo), str(loja_id)))
             conn.commit()
         except Exception:
             conn.rollback()
-            if str(codigo).isdigit():
-                try:
-                    cur.execute("UPDATE estoque SET quantidade = %s WHERE id = %s;", (nova_qtd, int(codigo)))
-                    conn.commit()
-                except Exception:
-                    conn.rollback()
+            try:
+                cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s;", (nova_qtd, str(codigo)))
+                conn.commit()
+            except Exception:
+                conn.rollback()
                     
         cur.close()
         conn.close()
@@ -516,21 +518,20 @@ def excluir_produto():
     loja_id = request.args.get("loja_id")
     codigo = request.args.get("codigo")
     
-    if codigo:
+    if codigo and loja_id:
         conn = get_db_connection()
         cur = conn.cursor()
         
         try:
-            cur.execute("DELETE FROM estoque WHERE codigo = %s;", (str(codigo),))
+            cur.execute("DELETE FROM estoque WHERE codigo = %s AND loja_id::text = %s;", (str(codigo), str(loja_id)))
             conn.commit()
         except Exception:
             conn.rollback()
-            if str(codigo).isdigit():
-                try:
-                    cur.execute("DELETE FROM estoque WHERE id = %s;", (int(codigo),))
-                    conn.commit()
-                except Exception:
-                    conn.rollback()
+            try:
+                cur.execute("DELETE FROM estoque WHERE codigo = %s;", (str(codigo),))
+                conn.commit()
+            except Exception:
+                conn.rollback()
                     
         cur.close()
         conn.close()
@@ -552,11 +553,11 @@ def vender():
     conn = get_db_connection()
     cur = conn.cursor()
     
-    cur.execute("SELECT * FROM estoque WHERE codigo = %s;", (str(codigo),))
+    cur.execute("SELECT * FROM estoque WHERE codigo = %s AND loja_id::text = %s;", (str(codigo), str(loja_id)))
     prod = cur.fetchone()
     
-    if not prod and str(codigo).isdigit():
-        cur.execute("SELECT * FROM estoque WHERE id = %s;", (int(codigo),))
+    if not prod:
+        cur.execute("SELECT * FROM estoque WHERE codigo = %s;", (str(codigo),))
         prod = cur.fetchone()
     
     if prod and int(prod.get('quantidade', 0)) >= qtd_venda:
@@ -564,10 +565,7 @@ def vender():
         valor_total = float(prod['preco']) * qtd_venda
         
         try:
-            if 'codigo' in prod and prod['codigo']:
-                cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s;", (novo_estoque, str(prod['codigo'])))
-            elif 'id' in prod and prod['id'] is not None:
-                cur.execute("UPDATE estoque SET quantidade = %s WHERE id = %s;", (novo_estoque, prod['id']))
+            cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s AND loja_id::text = %s;", (novo_estoque, str(codigo), str(loja_id)))
             conn.commit()
         except Exception:
             conn.rollback()
@@ -620,6 +618,7 @@ def cadastrar_produto():
                 "INSERT INTO estoque (loja_id, codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s, %s);",
                 (loja_id_num, codigo, nome, preco, quantidade)
             )
+            conn.commit()
         except Exception:
             conn.rollback()
             try:
@@ -627,10 +626,10 @@ def cadastrar_produto():
                     "INSERT INTO estoque (codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s);",
                     (codigo, nome, preco, quantidade)
                 )
+                conn.commit()
             except Exception:
                 conn.rollback()
             
-        conn.commit()
         cur.close()
         conn.close()
         
@@ -715,8 +714,14 @@ def exportar_estoque():
     conn = get_db_connection()
     cur = conn.cursor()
     
-    cur.execute("SELECT codigo, nome, preco, quantidade FROM estoque;")
-    produtos = cur.fetchall()
+    try:
+        cur.execute("SELECT codigo, nome, preco, quantidade FROM estoque WHERE loja_id::text = %s;", (str(loja_id),))
+        produtos = cur.fetchall()
+    except Exception:
+        conn.rollback()
+        cur.execute("SELECT codigo, nome, preco, quantidade FROM estoque;")
+        produtos = cur.fetchall()
+        
     cur.close()
     conn.close()
     
@@ -762,17 +767,10 @@ def importar_estoque():
                         "INSERT INTO estoque (loja_id, codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s, %s);",
                         (loja_id_num, codigo, nome, preco, quantidade)
                     )
+                    conn.commit()
                 except Exception:
                     conn.rollback()
-                    try:
-                        cur.execute(
-                            "INSERT INTO estoque (codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s);",
-                            (codigo, nome, preco, quantidade)
-                        )
-                    except Exception:
-                        conn.rollback()
                         
-        conn.commit()
         cur.close()
         conn.close()
         
@@ -795,6 +793,7 @@ def cadastrar_loja():
                 "INSERT INTO lojas (nome, cnpj, saldo_caixa) VALUES (%s, %s, 0.0);",
                 (nome, cnpj)
             )
+            conn.commit()
         except Exception:
             conn.rollback()
             try:
@@ -802,10 +801,10 @@ def cadastrar_loja():
                     "INSERT INTO lojas (nome, cnpj) VALUES (%s, %s);",
                     (nome, cnpj)
                 )
+                conn.commit()
             except Exception:
                 conn.rollback()
             
-        conn.commit()
         cur.close()
         conn.close()
         
