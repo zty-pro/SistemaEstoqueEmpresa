@@ -105,10 +105,12 @@ HTML_TEMPLATE = """
         .chart-box { background: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 25px; }
         .excel-actions { background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
         
-        .form-ajuste-qtd { display: flex; gap: 5px; align-items: center; }
+        .acoes-estoque { display: flex; gap: 6px; align-items: center; }
         .input-qtd-ajuste { width: 70px !important; padding: 5px !important; font-size: 13px !important; text-align: center; }
         .btn-salvar-qtd { width: auto !important; padding: 5px 10px !important; background: #6c757d; color: white; border: none; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; }
         .btn-salvar-qtd:hover { background: #5a6268; }
+        .btn-excluir-prod { width: auto !important; padding: 5px 10px !important; background: #dc3545; color: white; border: none; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; text-decoration: none; display: inline-block; }
+        .btn-excluir-prod:hover { background: #bd2130; }
     </style>
 </head>
 <body>
@@ -235,7 +237,7 @@ HTML_TEMPLATE = """
                     <th>Código</th>
                     <th>Nome do Produto</th>
                     <th>Preço (R$)</th>
-                    <th>Quantidade em Estoque</th>
+                    <th>Gerenciar Estoque</th>
                 </tr>
             </thead>
             <tbody>
@@ -246,12 +248,15 @@ HTML_TEMPLATE = """
                     <td>{{ p.get('nome', '') }}</td>
                     <td>R$ {{ "%.2f"|format(p.get('preco', 0)|float) }}</td>
                     <td>
-                        <form action="/editar_estoque" method="POST" class="form-ajuste-qtd">
-                            <input type="hidden" name="loja_id" value="{{ loja_atual_id }}">
-                            <input type="hidden" name="produto_codigo" value="{{ p_cod }}">
-                            <input type="number" name="nova_quantidade" value="{{ p.get('quantidade', 0) }}" min="0" class="input-qtd-ajuste" required>
-                            <button type="submit" class="btn-salvar-qtd" title="Atualizar quantidade manual">✏️ Salvar</button>
-                        </form>
+                        <div class="acoes-estoque">
+                            <form action="/editar_estoque" method="POST" style="display: flex; gap: 5px; align-items: center; margin: 0;">
+                                <input type="hidden" name="loja_id" value="{{ loja_atual_id }}">
+                                <input type="hidden" name="produto_codigo" value="{{ p_cod }}">
+                                <input type="number" name="nova_quantidade" value="{{ p.get('quantidade', 0) }}" min="0" class="input-qtd-ajuste" required>
+                                <button type="submit" class="btn-salvar-qtd" title="Atualizar quantidade">✏️ Salvar</button>
+                            </form>
+                            <a href="/excluir_produto?codigo={{ p_cod }}&loja_id={{ loja_atual_id }}" class="btn-excluir-prod" onclick="return confirm('Deseja realmente excluir este produto do estoque?');" title="Excluir produto">🗑️ Excluir</a>
+                        </div>
                     </td>
                 </tr>
                 {% endfor %}
@@ -410,7 +415,6 @@ def index():
         
     loja_atual_id = str(loja_atual['real_id'])
     
-    # Recalcula e sincroniza o saldo em caixa direto do somatório de vendas
     try:
         cur.execute("SELECT COALESCE(SUM(valor_total), 0) as total FROM vendas WHERE loja_id::text = %s;", (loja_atual_id,))
         res_caixa = cur.fetchone()
@@ -495,6 +499,35 @@ def editar_estoque():
             if str(codigo).isdigit():
                 try:
                     cur.execute("UPDATE estoque SET quantidade = %s WHERE id = %s;", (nova_qtd, int(codigo)))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    
+        cur.close()
+        conn.close()
+        
+    return redirect(url_for("index", loja_id=loja_id))
+
+@app.route("/excluir_produto")
+def excluir_produto():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    loja_id = request.args.get("loja_id")
+    codigo = request.args.get("codigo")
+    
+    if codigo:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        try:
+            cur.execute("DELETE FROM estoque WHERE codigo = %s;", (str(codigo),))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            if str(codigo).isdigit():
+                try:
+                    cur.execute("DELETE FROM estoque WHERE id = %s;", (int(codigo),))
                     conn.commit()
                 except Exception:
                     conn.rollback()
