@@ -467,36 +467,47 @@ def vender():
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # 1. Busca o produto exato pelo código (ex: P002) enviado no select
+    # 1. Localiza o produto pelo código ou por ID
     cur.execute("SELECT * FROM estoque WHERE codigo = %s;", (str(codigo),))
     prod = cur.fetchone()
+    
+    if not prod and str(codigo).isdigit():
+        cur.execute("SELECT * FROM estoque WHERE id = %s;", (int(codigo),))
+        prod = cur.fetchone()
     
     if prod and int(prod.get('quantidade', 0)) >= qtd_venda:
         novo_estoque = int(prod['quantidade']) - qtd_venda
         valor_total = float(prod['preco']) * qtd_venda
         
-        # 2. Executa a baixa direta no estoque usando a coluna codigo
-        cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s;", (novo_estoque, str(codigo)))
-        
-        # 3. Atualiza Saldo do Caixa da Loja
+        # 2. BAIXA IMEDIATA NO ESTOQUE COM COMMIT ISOLADO
+        try:
+            if 'codigo' in prod and prod['codigo']:
+                cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s;", (novo_estoque, str(prod['codigo'])))
+            elif 'id' in prod and prod['id'] is not None:
+                cur.execute("UPDATE estoque SET quantidade = %s WHERE id = %s;", (novo_estoque, prod['id']))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
+        # 3. Atualiza Caixa em Transação Separada
         try:
             loja_id_num = int(loja_id) if loja_id and str(loja_id).isdigit() else 1
             cur.execute("UPDATE lojas SET saldo_caixa = COALESCE(saldo_caixa, 0) + %s WHERE loja_id = %s;", (valor_total, loja_id_num))
+            conn.commit()
         except Exception:
-            pass
+            conn.rollback()
 
-        # 4. Registra a Venda no Histórico
+        # 4. Registra no Histórico de Vendas em Transação Separada
         try:
             loja_id_num = int(loja_id) if loja_id and str(loja_id).isdigit() else 1
             cur.execute(
                 "INSERT INTO vendas (loja_id, produto_codigo, produto_nome, quantidade, valor_total) VALUES (%s, %s, %s, %s, %s);",
                 (loja_id_num, str(codigo), prod.get('nome', 'Produto'), qtd_venda, valor_total)
             )
+            conn.commit()
         except Exception:
-            pass
+            conn.rollback()
                 
-        conn.commit()
-        
     cur.close()
     conn.close()
     
