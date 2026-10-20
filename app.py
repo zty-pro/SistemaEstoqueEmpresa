@@ -227,7 +227,7 @@ HTML_TEMPLATE = """
         <table>
             <thead>
                 <tr>
-                    <th>Código / ID</th>
+                    <th>Código</th>
                     <th>Nome do Produto</th>
                     <th>Preço (R$)</th>
                     <th>Quantidade</th>
@@ -235,9 +235,9 @@ HTML_TEMPLATE = """
             </thead>
             <tbody>
                 {% for p in produtos %}
-                {% set p_identifier = p.get('codigo') if p.get('codigo') else p.get('id') %}
+                {% set p_cod = p.get('codigo', p.get('id', '')) %}
                 <tr>
-                    <td><strong>{{ p_identifier }}</strong></td>
+                    <td><strong>{{ p_cod }}</strong></td>
                     <td>{{ p.get('nome', '') }}</td>
                     <td>R$ {{ "%.2f"|format(p.get('preco', 0)|float) }}</td>
                     <td><span style="font-weight:bold; color: {% if p.get('quantidade', 0)|int < 10 %}#dc3545{% else %}#28a745{% endif %};">{{ p.get('quantidade', 0) }} un</span></td>
@@ -261,8 +261,8 @@ HTML_TEMPLATE = """
                         <select name="produto_codigo" id="produto_codigo" required {% if not produtos %}disabled{% endif %}>
                             {% if produtos %}
                                 {% for p in produtos %}
-                                    {% set p_identifier = p.get('codigo') if p.get('codigo') else p.get('id') %}
-                                    <option value="{{ p_identifier }}">{{ p_identifier }} - {{ p.get('nome', '') }} (R$ {{ "%.2f"|format(p.get('preco', 0)|float) }}) - Restam {{ p.get('quantidade', 0) }} un</option>
+                                    {% set p_cod = p.get('codigo', p.get('id', '')) %}
+                                    <option value="{{ p_cod }}">{{ p_cod }} - {{ p.get('nome', '') }} (R$ {{ "%.2f"|format(p.get('preco', 0)|float) }}) - Restam {{ p.get('quantidade', 0) }} un</option>
                                 {% endfor %}
                             {% else %}
                                 <option>Cadastre um produto primeiro...</option>
@@ -384,7 +384,7 @@ def index():
         return "Nenhuma loja cadastrada.", 404
 
     for idx, l in enumerate(lojas):
-        l['real_id'] = str(l.get('id', l.get('loja_id', idx + 1)))
+        l['real_id'] = str(l.get('loja_id', l.get('id', idx + 1)))
 
     loja_atual = None
     if loja_id_param:
@@ -467,38 +467,25 @@ def vender():
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Busca flexível por ID ou Código do produto
-    prod = None
-    if str(codigo).isdigit():
-        cur.execute("SELECT * FROM estoque WHERE id = %s;", (int(codigo),))
-        prod = cur.fetchone()
-        
-    if not prod:
-        cur.execute("SELECT * FROM estoque WHERE codigo = %s;", (str(codigo),))
-        prod = cur.fetchone()
+    # 1. Busca o produto exato pelo código (ex: P002) enviado no select
+    cur.execute("SELECT * FROM estoque WHERE codigo = %s;", (str(codigo),))
+    prod = cur.fetchone()
     
     if prod and int(prod.get('quantidade', 0)) >= qtd_venda:
         novo_estoque = int(prod['quantidade']) - qtd_venda
         valor_total = float(prod['preco']) * qtd_venda
         
-        # 1. Baixa no estoque de forma segura e garantida
-        if 'id' in prod and prod['id'] is not None:
-            cur.execute("UPDATE estoque SET quantidade = %s WHERE id = %s;", (novo_estoque, prod['id']))
-        else:
-            cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s;", (novo_estoque, str(codigo)))
+        # 2. Executa a baixa direta no estoque usando a coluna codigo
+        cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s;", (novo_estoque, str(codigo)))
         
-        # 2. Atualiza Saldo do Caixa da Loja com verificação de coluna segura
+        # 3. Atualiza Saldo do Caixa da Loja
         try:
             loja_id_num = int(loja_id) if loja_id and str(loja_id).isdigit() else 1
-            try:
-                cur.execute("UPDATE lojas SET saldo_caixa = COALESCE(saldo_caixa, 0) + %s WHERE id = %s;", (valor_total, loja_id_num))
-            except Exception:
-                cur.rollback()
-                cur.execute("UPDATE lojas SET saldo_caixa = COALESCE(saldo_caixa, 0) + %s WHERE loja_id = %s;", (valor_total, loja_id_num))
+            cur.execute("UPDATE lojas SET saldo_caixa = COALESCE(saldo_caixa, 0) + %s WHERE loja_id = %s;", (valor_total, loja_id_num))
         except Exception:
-            conn.rollback()
+            pass
 
-        # 3. Registra a Venda na tabela de vendas
+        # 4. Registra a Venda no Histórico
         try:
             loja_id_num = int(loja_id) if loja_id and str(loja_id).isdigit() else 1
             cur.execute(
@@ -506,7 +493,7 @@ def vender():
                 (loja_id_num, str(codigo), prod.get('nome', 'Produto'), qtd_venda, valor_total)
             )
         except Exception:
-            conn.rollback()
+            pass
                 
         conn.commit()
         
@@ -568,19 +555,8 @@ def comprovante_pdf(venda_id):
         conn.close()
         return "Comprovante não encontrado.", 404
         
-    # Busca segura na tabela de lojas independente da coluna de ID
-    loja = None
-    try:
-        cur.execute("SELECT * FROM lojas WHERE id = %s LIMIT 1;", (venda['loja_id'],))
-        loja = cur.fetchone()
-    except Exception:
-        conn.rollback()
-        try:
-            cur.execute("SELECT * FROM lojas WHERE loja_id = %s LIMIT 1;", (venda['loja_id'],))
-            loja = cur.fetchone()
-        except Exception:
-            conn.rollback()
-
+    cur.execute("SELECT * FROM lojas WHERE loja_id = %s LIMIT 1;", (venda['loja_id'],))
+    loja = cur.fetchone()
     cur.close()
     conn.close()
     
@@ -643,3 +619,91 @@ def exportar_estoque():
     
     for p in produtos:
         writer.writerow([p.get('codigo'), p.get('nome'), p.get('preco'), p.get('quantidade')])
+        
+    output.seek(0)
+    return Response(
+        output,
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment;filename=estoque_loja.csv"}
+    )
+
+@app.route("/importar_estoque", methods=["POST"])
+def importar_estoque():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    loja_id = request.form.get("loja_id")
+    arquivo = request.files.get("arquivo_csv")
+    
+    if arquivo and arquivo.filename.endswith('.csv'):
+        stream = io.TextIOWrapper(arquivo.stream, encoding="utf-8")
+        reader = csv.DictReader(stream)
+        
+        conn = get_db_connection()
+        cur = conn.cursor()
+        loja_id_num = int(loja_id) if loja_id and str(loja_id).isdigit() else 1
+        
+        for row in reader:
+            codigo = row.get('codigo')
+            nome = row.get('nome')
+            preco = float(row.get('preco', 0))
+            quantidade = int(row.get('quantidade', 0))
+            
+            if codigo and nome:
+                try:
+                    cur.execute(
+                        "INSERT INTO estoque (loja_id, codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s, %s);",
+                        (loja_id_num, codigo, nome, preco, quantidade)
+                    )
+                except Exception:
+                    conn.rollback()
+                    try:
+                        cur.execute(
+                            "INSERT INTO estoque (codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s);",
+                            (codigo, nome, preco, quantidade)
+                        )
+                    except Exception:
+                        conn.rollback()
+                        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+    return redirect(url_for("index", loja_id=loja_id))
+
+@app.route("/cadastrar_loja", methods=["POST"])
+def cadastrar_loja():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    nome = request.form.get("nome")
+    cnpj = request.form.get("cnpj")
+    
+    if nome and cnpj:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        try:
+            cur.execute(
+                "INSERT INTO lojas (nome, cnpj, saldo_caixa) VALUES (%s, %s, 0.0);",
+                (nome, cnpj)
+            )
+        except Exception:
+            conn.rollback()
+            try:
+                cur.execute(
+                    "INSERT INTO lojas (nome, cnpj) VALUES (%s, %s);",
+                    (nome, cnpj)
+                )
+            except Exception:
+                conn.rollback()
+            
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+    return redirect(url_for("index"))
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
