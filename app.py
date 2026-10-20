@@ -544,3 +544,240 @@ def vender():
             try:
                 cur.execute("UPDATE lojas SET saldo_caixa = COALESCE(saldo_caixa, 0) + %s WHERE loja_id = %s;", (valor_total, loja_id_num))
                 conn.commit()
+            except Exception:
+                conn.rollback()
+                cur.execute("UPDATE lojas SET saldo_caixa = COALESCE(saldo_caixa, 0) + %s WHERE id = %s;", (valor_total, loja_id_num))
+                conn.commit()
+        except Exception:
+            conn.rollback()
+
+        try:
+            loja_id_num = int(loja_id) if loja_id and str(loja_id).isdigit() else 1
+            cur.execute(
+                "INSERT INTO vendas (loja_id, produto_codigo, produto_nome, quantidade, valor_total) VALUES (%s, %s, %s, %s, %s);",
+                (loja_id_num, str(codigo), prod.get('nome', 'Produto'), qtd_venda, valor_total)
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+                
+    cur.close()
+    conn.close()
+    
+    return redirect(url_for("index", loja_id=loja_id))
+
+@app.route("/cadastrar_produto", methods=["POST"])
+def cadastrar_produto():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    loja_id = request.form.get("loja_id")
+    codigo = request.form.get("codigo")
+    nome = request.form.get("nome")
+    preco = request.form.get("preco", type=float)
+    quantidade = request.form.get("quantidade", type=int)
+    
+    if codigo and nome and preco is not None and quantidade is not None:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        loja_id_num = int(loja_id) if loja_id and str(loja_id).isdigit() else 1
+        try:
+            cur.execute(
+                "INSERT INTO estoque (loja_id, codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s, %s);",
+                (loja_id_num, codigo, nome, preco, quantidade)
+            )
+        except Exception:
+            conn.rollback()
+            try:
+                cur.execute(
+                    "INSERT INTO estoque (codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s);",
+                    (codigo, nome, preco, quantidade)
+                )
+            except Exception:
+                conn.rollback()
+            
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+    return redirect(url_for("index", loja_id=loja_id))
+
+@app.route("/comprovante_pdf/<int:venda_id>")
+def comprovante_pdf(venda_id):
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    cur.execute("SELECT * FROM vendas WHERE id = %s;", (venda_id,))
+    venda = cur.fetchone()
+    
+    if not venda:
+        cur.close()
+        conn.close()
+        return "Comprovante não encontrado.", 404
+        
+    loja = None
+    try:
+        cur.execute("SELECT * FROM lojas WHERE loja_id = %s LIMIT 1;", (venda['loja_id'],))
+        loja = cur.fetchone()
+    except Exception:
+        conn.rollback()
+        try:
+            cur.execute("SELECT * FROM lojas WHERE id = %s LIMIT 1;", (venda['loja_id'],))
+            loja = cur.fetchone()
+        except Exception:
+            conn.rollback()
+            
+    cur.close()
+    conn.close()
+    
+    loja_nome = loja.get('nome', 'Empresa / Loja') if loja else 'Sistema de Estoque'
+    loja_cnpj = loja.get('cnpj', 'N/A') if loja else 'N/A'
+    
+    buffer = io.BytesIO()
+    p = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    
+    p.setFont("Helvetica-Bold", 16)
+    p.drawString(50, height - 50, f"COMPROVANTE DE VENDA")
+    
+    p.setFont("Helvetica", 11)
+    p.drawString(50, height - 75, f"Loja: {loja_nome} | CNPJ: {loja_cnpj}")
+    p.drawString(50, height - 95, f"Transação ID: #{venda['id']}")
+    p.drawString(50, height - 115, f"Data e Hora: {venda['data_venda']}")
+    
+    p.setStrokeColorRGB(0.2, 0.4, 0.8)
+    p.setLineWidth(1)
+    p.line(50, height - 130, width - 50, height - 130)
+    
+    p.setFont("Helvetica-Bold", 12)
+    p.drawString(50, height - 160, "Item Adquirido:")
+    
+    p.setFont("Helvetica", 11)
+    p.drawString(70, height - 185, f"Produto: {venda['produto_nome']} (Cód: {venda['produto_codigo']})")
+    p.drawString(70, height - 205, f"Quantidade: {venda['quantidade']} unidade(s)")
+    p.drawString(70, height - 225, f"Valor Total: R$ {float(venda['valor_total']):.2f}")
+    
+    p.line(50, height - 250, width - 50, height - 250)
+    
+    p.setFont("Helvetica-Oblique", 9)
+    p.drawString(50, height - 280, "Documento gerado eletronicamente pelo Sistema de Gestão de Estoque & Caixa.")
+    p.drawString(50, height - 295, "Obrigado pela preferência!")
+    
+    p.showPage()
+    p.save()
+    
+    buffer.seek(0)
+    return send_file(buffer, as_attachment=True, download_name=f"comprovante_venda_{venda_id}.pdf", mimetype="application/pdf")
+
+@app.route("/exportar_estoque")
+def exportar_estoque():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    loja_id = request.args.get("loja_id")
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    cur.execute("SELECT codigo, nome, preco, quantidade FROM estoque;")
+    produtos = cur.fetchall()
+    cur.close()
+    conn.close()
+    
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['codigo', 'nome', 'preco', 'quantidade'])
+    
+    for p in produtos:
+        writer.writerow([p.get('codigo'), p.get('nome'), p.get('preco'), p.get('quantidade')])
+        
+    output.seek(0)
+    return Response(
+        output,
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment;filename=estoque_loja.csv"}
+    )
+
+@app.route("/importar_estoque", methods=["POST"])
+def importar_estoque():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    loja_id = request.form.get("loja_id")
+    arquivo = request.files.get("arquivo_csv")
+    
+    if arquivo and arquivo.filename.endswith('.csv'):
+        stream = io.TextIOWrapper(arquivo.stream, encoding="utf-8")
+        reader = csv.DictReader(stream)
+        
+        conn = get_db_connection()
+        cur = conn.cursor()
+        loja_id_num = int(loja_id) if loja_id and str(loja_id).isdigit() else 1
+        
+        for row in reader:
+            codigo = row.get('codigo')
+            nome = row.get('nome')
+            preco = float(row.get('preco', 0))
+            quantidade = int(row.get('quantidade', 0))
+            
+            if codigo and nome:
+                try:
+                    cur.execute(
+                        "INSERT INTO estoque (loja_id, codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s, %s);",
+                        (loja_id_num, codigo, nome, preco, quantidade)
+                    )
+                except Exception:
+                    conn.rollback()
+                    try:
+                        cur.execute(
+                            "INSERT INTO estoque (codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s);",
+                            (codigo, nome, preco, quantidade)
+                        )
+                    except Exception:
+                        conn.rollback()
+                        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+    return redirect(url_for("index", loja_id=loja_id))
+
+@app.route("/cadastrar_loja", methods=["POST"])
+def cadastrar_loja():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    nome = request.form.get("nome")
+    cnpj = request.form.get("cnpj")
+    
+    if nome and cnpj:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        try:
+            cur.execute(
+                "INSERT INTO lojas (nome, cnpj, saldo_caixa) VALUES (%s, %s, 0.0);",
+                (nome, cnpj)
+            )
+        except Exception:
+            conn.rollback()
+            try:
+                cur.execute(
+                    "INSERT INTO lojas (nome, cnpj) VALUES (%s, %s);",
+                    (nome, cnpj)
+                )
+            except Exception:
+                conn.rollback()
+            
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+    return redirect(url_for("index"))
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
