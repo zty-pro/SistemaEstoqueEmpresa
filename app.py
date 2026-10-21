@@ -105,11 +105,13 @@ HTML_TEMPLATE = """
         .chart-box { background: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 25px; }
         .excel-actions { background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
         
-        .acoes-estoque { display: flex; gap: 6px; align-items: center; }
-        .input-qtd-ajuste { width: 70px !important; padding: 5px !important; font-size: 13px !important; text-align: center; }
-        .btn-salvar-qtd { width: auto !important; padding: 5px 10px !important; background: #6c757d; color: white; border: none; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; }
+        .acoes-estoque { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+        .input-qtd-ajuste { width: 60px !important; padding: 5px !important; font-size: 13px !important; text-align: center; }
+        .btn-salvar-qtd { width: auto !important; padding: 5px 8px !important; background: #6c757d; color: white; border: none; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; }
         .btn-salvar-qtd:hover { background: #5a6268; }
-        .btn-excluir-prod { width: auto !important; padding: 5px 10px !important; background: #dc3545; color: white; border: none; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; text-decoration: none; display: inline-block; }
+        .btn-remover-qtd { width: auto !important; padding: 5px 8px !important; background: #e67e22; color: white; border: none; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; }
+        .btn-remover-qtd:hover { background: #d35400; }
+        .btn-excluir-prod { width: auto !important; padding: 5px 8px !important; background: #dc3545; color: white; border: none; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; text-decoration: none; display: inline-block; }
         .btn-excluir-prod:hover { background: #bd2130; }
     </style>
 </head>
@@ -249,12 +251,23 @@ HTML_TEMPLATE = """
                     <td>R$ {{ "%.2f"|format(p.get('preco', 0)|float) }}</td>
                     <td>
                         <div class="acoes-estoque">
-                            <form action="/editar_estoque" method="POST" style="display: flex; gap: 5px; align-items: center; margin: 0;">
+                            <!-- Ajuste Manual -->
+                            <form action="/editar_estoque" method="POST" style="display: flex; gap: 4px; align-items: center; margin: 0;">
                                 <input type="hidden" name="loja_id" value="{{ loja_atual_id }}">
                                 <input type="hidden" name="produto_codigo" value="{{ p_cod }}">
-                                <input type="number" name="nova_quantidade" value="{{ p.get('quantidade', 0) }}" min="0" class="input-qtd-ajuste" required>
-                                <button type="submit" class="btn-salvar-qtd" title="Atualizar quantidade">✏️ Salvar</button>
+                                <input type="number" name="nova_quantidade" value="{{ p.get('quantidade', 0) }}" min="0" class="input-qtd-ajuste" required title="Novo estoque total">
+                                <button type="submit" class="btn-salvar-qtd" title="Definir estoque exato">✏️ Salvar</button>
                             </form>
+                            
+                            <!-- Baixa Rápida por Quantidade -->
+                            <form action="/remover_quantidade" method="POST" style="display: flex; gap: 4px; align-items: center; margin: 0;">
+                                <input type="hidden" name="loja_id" value="{{ loja_atual_id }}">
+                                <input type="hidden" name="codigo" value="{{ p_cod }}">
+                                <input type="number" name="qtd_remover" value="1" min="1" max="{{ p.get('quantidade', 0) }}" class="input-qtd-ajuste" required title="Quantidade para baixar">
+                                <button type="submit" class="btn-remover-qtd" title="Remover quantidade do estoque">➖ Baixar</button>
+                            </form>
+
+                            <!-- Excluir Produto -->
                             <a href="/excluir_produto?codigo={{ p_cod }}&loja_id={{ loja_atual_id }}" class="btn-excluir-prod" onclick="return confirm('Deseja realmente excluir este produto desta filial?');" title="Excluir produto">🗑️ Excluir</a>
                         </div>
                     </td>
@@ -423,7 +436,6 @@ def index():
     except Exception:
         pass
     
-    # Busca estritamente produtos da loja selecionada
     produtos = []
     try:
         cur.execute("SELECT * FROM estoque WHERE loja_id::text = %s;", (loja_atual_id,))
@@ -504,10 +516,45 @@ def editar_estoque():
                 conn.commit()
             except Exception:
                 conn.rollback()
-                    
+                
         cur.close()
         conn.close()
         
+    return redirect(url_for("index", loja_id=loja_id))
+
+@app.route("/remover_quantidade", methods=["POST"])
+def remover_quantidade():
+    if "usuario_id" not in session:
+        return redirect(url_for("login"))
+        
+    loja_id = request.form.get("loja_id")
+    codigo = request.form.get("codigo")
+    qtd_remover = request.form.get("qtd_remover", type=int)
+    
+    if codigo and qtd_remover and qtd_remover > 0:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        try:
+            cur.execute("SELECT quantidade FROM estoque WHERE codigo = %s AND loja_id::text = %s;", (str(codigo), str(loja_id)))
+            prod = cur.fetchone()
+            
+            if not prod:
+                cur.execute("SELECT quantidade FROM estoque WHERE codigo = %s;", (str(codigo),))
+                prod = cur.fetchone()
+                
+            if prod:
+                qtd_atual = int(prod.get('quantidade', 0))
+                nova_qtd = max(0, qtd_atual - qtd_remover)
+                
+                cur.execute("UPDATE estoque SET quantidade = %s WHERE codigo = %s AND loja_id::text = %s;", (nova_qtd, str(codigo), str(loja_id)))
+                conn.commit()
+        except Exception:
+            conn.rollback()
+        finally:
+            cur.close()
+            conn.close()
+            
     return redirect(url_for("index", loja_id=loja_id))
 
 @app.route("/excluir_produto")
@@ -532,7 +579,7 @@ def excluir_produto():
                 conn.commit()
             except Exception:
                 conn.rollback()
-                    
+                
         cur.close()
         conn.close()
         
@@ -770,6 +817,14 @@ def importar_estoque():
                     conn.commit()
                 except Exception:
                     conn.rollback()
+                    try:
+                        cur.execute(
+                            "INSERT INTO estoque (codigo, nome, preco, quantidade) VALUES (%s, %s, %s, %s);",
+                            (codigo, nome, preco, quantidade)
+                        )
+                        conn.commit()
+                    except Exception:
+                        conn.rollback()
                         
         cur.close()
         conn.close()
@@ -789,21 +844,10 @@ def cadastrar_loja():
         cur = conn.cursor()
         
         try:
-            cur.execute(
-                "INSERT INTO lojas (nome, cnpj, saldo_caixa) VALUES (%s, %s, 0.0);",
-                (nome, cnpj)
-            )
+            cur.execute("INSERT INTO lojas (nome, cnpj, saldo_caixa) VALUES (%s, %s, 0);", (nome, cnpj))
             conn.commit()
         except Exception:
             conn.rollback()
-            try:
-                cur.execute(
-                    "INSERT INTO lojas (nome, cnpj) VALUES (%s, %s);",
-                    (nome, cnpj)
-                )
-                conn.commit()
-            except Exception:
-                conn.rollback()
             
         cur.close()
         conn.close()
