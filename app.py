@@ -26,20 +26,74 @@ LOGIN_TEMPLATE = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - Gestão de Estoque</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; }
-        .login-card { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 380px; }
-        h2 { color: #1a73e8; margin-top: 0; text-align: center; }
-        .form-group { margin-bottom: 15px; }
-        label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 13px; }
-        input { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; font-size: 14px; }
-        button { width: 100%; padding: 12px; background-color: #1a73e8; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; font-size: 15px; margin-top: 10px; }
-        button:hover { background-color: #1557b0; }
-        .alert-error { background-color: #f8d7da; color: #721c24; padding: 10px; border-radius: 5px; margin-bottom: 15px; text-align: center; font-size: 14px; }
+        * { box-sizing: border-box; }
+        body { 
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); 
+            margin: 0; 
+            padding: 20px; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+        }
+        .login-card { 
+            background: #ffffff; 
+            padding: 40px 30px; 
+            border-radius: 16px; 
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3); 
+            width: 100%; 
+            max-width: 400px; 
+        }
+        h2 { 
+            color: #0f172a; 
+            margin-top: 0; 
+            margin-bottom: 24px;
+            text-align: center; 
+            font-size: 24px;
+            font-weight: 700;
+        }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; font-weight: 600; margin-bottom: 8px; font-size: 13px; color: #475569; }
+        input { 
+            width: 100%; 
+            padding: 12px 16px; 
+            border: 1px solid #cbd5e1; 
+            border-radius: 8px; 
+            font-size: 14px; 
+            transition: all 0.2s ease;
+            outline: none;
+        }
+        input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15); }
+        button { 
+            width: 100%; 
+            padding: 12px; 
+            background-color: #2563eb; 
+            color: white; 
+            border: none; 
+            border-radius: 8px; 
+            font-weight: 600; 
+            cursor: pointer; 
+            font-size: 15px; 
+            margin-top: 10px; 
+            transition: background-color 0.2s;
+        }
+        button:hover { background-color: #1d4ed8; }
+        .alert-error { 
+            background-color: #fee2e2; 
+            color: #991b1b; 
+            padding: 12px; 
+            border-radius: 8px; 
+            margin-bottom: 20px; 
+            text-align: center; 
+            font-size: 13px; 
+            font-weight: 500;
+        }
     </style>
 </head>
 <body>
     <div class="login-card">
-        <h2>🔒 Acesso ao Sistema</h2>
+        <h2>🔒 Painel de Acesso</h2>
         
         {% if erro %}
             <div class="alert-error">{{ erro }}</div>
@@ -47,12 +101,12 @@ LOGIN_TEMPLATE = """
 
         <form action="/login" method="POST">
             <div class="form-group">
-                <label for="email">E-mail do Usuário:</label>
+                <label for="email">E-mail do Usuário</label>
                 <input type="email" id="email" name="email" required placeholder="admin@empresa.com">
             </div>
             <div class="form-group">
-                <label for="senha">Senha:</label>
-                <input type="password" id="senha" name="senha" required placeholder="******">
+                <label for="senha">Senha</label>
+                <input type="password" id="senha" name="senha" required placeholder="••••••••">
             </div>
             <button type="submit">Entrar no Sistema</button>
         </form>
@@ -67,89 +121,147 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistema de Gestão de Estoque</title>
+    <title>Sistema de Gestão de Estoque & Caixa</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; color: #333; }
-        .container { max-width: 950px; margin: 0 auto; background: white; padding: 25px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-        .header-user { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #eef3fc; padding-bottom: 10px; margin-bottom: 20px; }
-        .user-info { font-size: 14px; color: #555; }
-        .btn-logout { background: #dc3545; color: white; padding: 6px 12px; text-decoration: none; border-radius: 5px; font-size: 13px; font-weight: bold; }
-        .btn-logout:hover { background: #bd2130; }
-        h1 { color: #1a73e8; margin-top: 0; }
-        .card { background: #eef3fc; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
-        .card h3 { margin: 0; }
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; margin-bottom: 25px; }
-        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; vertical-align: middle; }
-        th { background-color: #1a73e8; color: white; }
-        tr:hover { background-color: #f1f1f1; }
-        .grid-forms { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
-        @media (max-width: 768px) { .grid-forms { grid-template-columns: 1fr; } }
-        .box-form { background: #fafafa; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px; }
-        .box-form h3 { margin-top: 0; color: #1a73e8; }
-        .form-group { margin-bottom: 12px; }
-        label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 13px; }
-        input, select, button { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; font-size: 14px; }
-        button.btn-venda { background-color: #28a745; color: white; border: none; font-weight: bold; cursor: pointer; margin-top: 10px; }
-        button.btn-venda:hover { background-color: #218838; }
-        button.btn-cadastrar { background-color: #1a73e8; color: white; border: none; font-weight: bold; cursor: pointer; margin-top: 10px; }
-        button.btn-cadastrar:hover { background-color: #1557b0; }
-        .btn-excel { background-color: #17a2b8; color: white; text-decoration: none; padding: 8px 14px; border-radius: 5px; font-size: 13px; font-weight: bold; display: inline-block; margin-right: 5px; }
-        .btn-excel:hover { background-color: #138496; }
-        .btn-pdf { background-color: #ffc107; color: #333; text-decoration: none; padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; }
-        .btn-pdf:hover { background-color: #e0a800; }
-        .nav-lojas { margin-bottom: 20px; }
-        .nav-lojas a { text-decoration: none; padding: 8px 16px; background: #6c757d; color: white; border-radius: 5px; margin-right: 5px; display: inline-block; margin-bottom: 5px; }
-        .nav-lojas a.active { background: #1a73e8; font-weight: bold; }
-        .empty-msg { text-align: center; color: #777; padding: 20px; font-style: italic; }
-        .chart-box { background: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 25px; }
-        .excel-actions { background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+        * { box-sizing: border-box; }
+        body { 
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
+            background-color: #f8fafc; 
+            margin: 0; 
+            padding: 30px 20px; 
+            color: #1e293b; 
+        }
+        .container { 
+            max-width: 1050px; 
+            margin: 0 auto; 
+            background: white; 
+            padding: 35px; 
+            border-radius: 16px; 
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05); 
+            border: 1px solid #e2e8f0;
+        }
+        .header-user { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            border-bottom: 1px solid #f1f5f9; 
+            padding-bottom: 15px; 
+            margin-bottom: 25px; 
+        }
+        .user-info { font-size: 14px; color: #64748b; }
+        .user-info strong { color: #0f172a; }
+        .btn-logout { 
+            background: #f1f5f9; 
+            color: #ef4444; 
+            padding: 8px 16px; 
+            text-decoration: none; 
+            border-radius: 8px; 
+            font-size: 13px; 
+            font-weight: 600; 
+            transition: all 0.2s;
+        }
+        .btn-logout:hover { background: #fee2e2; }
+        h1 { color: #0f172a; margin-top: 0; font-size: 26px; font-weight: 700; margin-bottom: 20px;}
+        h2 { color: #1e293b; font-size: 18px; font-weight: 600; margin-top: 30px; margin-bottom: 15px; }
         
-        .acoes-estoque { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-        .input-qtd-ajuste { width: 60px !important; padding: 5px !important; font-size: 13px !important; text-align: center; }
-        .btn-salvar-qtd { width: auto !important; padding: 5px 8px !important; background: #6c757d; color: white; border: none; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; }
-        .btn-salvar-qtd:hover { background: #5a6268; }
-        .btn-remover-qtd { width: auto !important; padding: 5px 8px !important; background: #e67e22; color: white; border: none; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; }
-        .btn-remover-qtd:hover { background: #d35400; }
-        .btn-excluir-prod { width: auto !important; padding: 5px 8px !important; background: #dc3545; color: white; border: none; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; text-decoration: none; display: inline-block; }
-        .btn-excluir-prod:hover { background: #bd2130; }
+        .card { 
+            background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); 
+            padding: 20px 25px; 
+            border-radius: 12px; 
+            margin-bottom: 25px; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            border: 1px solid #bbf7d0;
+        }
+        .card h3 { margin: 0; color: #166534; font-size: 18px; }
+        .card small { color: #15803d; font-weight: 500; }
+        .card h2 { margin: 0; color: #166534; font-size: 24px; }
+
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; margin-bottom: 25px; background: white; border-radius: 8px; overflow: hidden; border: 1px solid #e2e8f0; }
+        th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #f1f5f9; vertical-align: middle; font-size: 14px; }
+        th { background-color: #f8fafc; color: #475569; font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em; }
+        tr:hover { background-color: #f8fafc; }
+        
+        .grid-forms { display: grid; grid-template-columns: 1fr 1fr; gap: 25px; margin-top: 25px; }
+        @media (max-width: 768px) { .grid-forms { grid-template-columns: 1fr; } }
+        
+        .box-form { background: #f8fafc; padding: 25px; border: 1px solid #e2e8f0; border-radius: 12px; }
+        .box-form h3 { margin-top: 0; color: #0f172a; font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+        
+        .form-group { margin-bottom: 16px; }
+        label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 12px; color: #475569; text-transform: uppercase; letter-spacing: 0.03em;}
+        input, select, button { width: 100%; padding: 10px 14px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box; font-size: 14px; background: white; outline: none; transition: all 0.2s; }
+        input:focus, select:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15); }
+        
+        button.btn-venda { background-color: #16a34a; color: white; border: none; font-weight: 600; cursor: pointer; margin-top: 5px; }
+        button.btn-venda:hover { background-color: #15803d; }
+        button.btn-cadastrar { background-color: #2563eb; color: white; border: none; font-weight: 600; cursor: pointer; margin-top: 5px; }
+        button.btn-cadastrar:hover { background-color: #1d4ed8; }
+        
+        .btn-excel { background-color: #0ea5e9; color: white; text-decoration: none; padding: 10px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; display: inline-block; transition: background 0.2s; }
+        .btn-excel:hover { background-color: #0284c7; }
+        
+        .btn-pdf { background-color: #f59e0b; color: white; text-decoration: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; display: inline-block; transition: background 0.2s; }
+        .btn-pdf:hover { background-color: #d97706; }
+        
+        .nav-lojas { margin-bottom: 25px; background: #f1f5f9; padding: 15px; border-radius: 12px; border: 1px solid #e2e8f0; }
+        .nav-lojas strong { color: #475569; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; }
+        .nav-lojas a { text-decoration: none; padding: 8px 16px; background: white; color: #475569; border-radius: 6px; margin-right: 8px; display: inline-block; margin-top: 8px; font-size: 13px; font-weight: 500; border: 1px solid #cbd5e1; transition: all 0.2s; }
+        .nav-lojas a:hover { border-color: #94a3b8; }
+        .nav-lojas a.active { background: #2563eb; color: white; border-color: #2563eb; font-weight: 600; }
+        
+        .empty-msg { text-align: center; color: #94a3b8; padding: 25px; font-style: italic; font-size: 14px; background: #f8fafc; border-radius: 8px; border: 1px dashed #cbd5e1; }
+        .chart-box { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 25px; }
+        .excel-actions { background: #f8fafc; padding: 20px; border-radius: 12px; border: 1px solid #e2e8f0; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; }
+        
+        .acoes-estoque { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .input-qtd-ajuste { width: 65px !important; padding: 6px !important; font-size: 13px !important; text-align: center; }
+        .btn-salvar-qtd { width: auto !important; padding: 6px 10px !important; background: #64748b; color: white; border: none; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
+        .btn-salvar-qtd:hover { background: #475569; }
+        .btn-remover-qtd { width: auto !important; padding: 6px 10px !important; background: #ea580c; color: white; border: none; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
+        .btn-remover-qtd:hover { background: #c2410c; }
+        .btn-excluir-prod { width: auto !important; padding: 6px 10px !important; background: #ef4444; color: white; border: none; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; }
+        .btn-excluir-prod:hover { background: #dc2626; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header-user">
             <div class="user-info">
-                👤 Olá, <strong>{{ usuario_nome }}</strong> | Cargo: <strong>{{ usuario_cargo|upper }}</strong>
+                👋 Olá, <strong>{{ usuario_nome }}</strong> &bull; Cargo: <strong>{{ usuario_cargo|upper }}</strong>
             </div>
             <a href="/logout" class="btn-logout">Sair do Sistema</a>
         </div>
 
-        <h1>📦 Sistema Unificado de Estoque & Caixa</h1>
+        <h1>📦 Painel de Controle: Estoque & Caixa</h1>
         
         <div class="nav-lojas">
-            <strong>Selecionar Loja:</strong><br><br>
+            <strong>Selecionar Filial:</strong><br>
             {% for l in lojas %}
                 <a href="/?loja_id={{ l.real_id }}" class="{% if l.real_id|string == loja_atual_id|string %}active{% endif %}">
-                    {{ l.get('nome', 'Loja') }} ({{ l.get('cnpj', 'N/A') }})
+                    📍 {{ l.get('nome', 'Loja') }} <span style="font-size: 11px; opacity: 0.8;">({{ l.get('cnpj', 'N/A') }})</span>
                 </a>
             {% endfor %}
         </div>
 
         <div class="card">
             <div>
-                <h3>{{ loja_atual.get('nome', 'Loja') }}</h3>
+                <h3 style="margin-bottom: 4px;">{{ loja_atual.get('nome', 'Loja') }}</h3>
                 <small>CNPJ: {{ loja_atual.get('cnpj', 'N/A') }}</small>
             </div>
             <div>
-                <h2>Saldo em Caixa: <span style="color: #28a745;">R$ {{ "%.2f"|format(loja_atual.get('saldo_caixa', 0)|float) }}</span></h2>
+                <span style="font-size: 12px; font-weight: 600; color: #166534; text-transform: uppercase; display: block; text-align: right;">Saldo em Caixa</span>
+                <h2>R$ {{ "%.2f"|format(loja_atual.get('saldo_caixa', 0)|float) }}</h2>
             </div>
         </div>
 
         <!-- EXPORTAÇÃO E IMPORTAÇÃO -->
         <div class="excel-actions">
             <div>
-                <strong>Gerir Produtos por Planilha:</strong><br>
-                <small>Exporte ou importe dados em massa (CSV).</small>
+                <strong style="color: #0f172a; font-size: 15px;">Gestão de Dados via Planilha</strong><br>
+                <small style="color: #64748b;">Faça backup exportando em CSV ou importe novos produtos em lote.</small>
             </div>
             <div>
                 <a href="/exportar_estoque?loja_id={{ loja_atual_id }}" class="btn-excel">📥 Exportar Estoque (CSV)</a>
@@ -158,23 +270,23 @@ HTML_TEMPLATE = """
 
         <div class="box-form" style="margin-bottom: 25px;">
             <h3>📤 Importar Produtos via Planilha (CSV)</h3>
-            <form action="/importar_estoque" method="POST" enctype="multipart/form-data" style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;">
+            <form action="/importar_estoque" method="POST" enctype="multipart/form-data" style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
                 <input type="hidden" name="loja_id" value="{{ loja_atual_id }}">
                 <div style="flex: 1; min-width: 250px;">
-                    <label for="arquivo_csv">Selecione o arquivo CSV (Colunas: codigo, nome, preco, quantidade):</label>
-                    <input type="file" id="arquivo_csv" name="arquivo_csv" accept=".csv" required>
+                    <label for="arquivo_csv">Arquivo CSV (Colunas: codigo, nome, preco, quantidade)</label>
+                    <input type="file" id="arquivo_csv" name="arquivo_csv" accept=".csv" required style="padding: 8px;">
                 </div>
                 <div>
-                    <button type="submit" class="btn-cadastrar" style="margin-top: 0;">Importar Produtos</button>
+                    <button type="submit" class="btn-cadastrar" style="margin-top: 0; padding: 10px 20px;">Processar Importação</button>
                 </div>
             </form>
         </div>
 
         <!-- RELATÓRIO E GRÁFICO -->
         <div class="chart-box">
-            <h3>📊 Relatório de Desempenho de Vendas</h3>
+            <h3 style="margin-top: 0; color: #0f172a; font-size: 16px; font-weight: 600; margin-bottom: 15px;">📊 Desempenho de Vendas (Top Produtos)</h3>
             {% if grafico_labels and grafico_dados %}
-                <canvas id="vendasChart" style="max-height: 250px;"></canvas>
+                <canvas id="vendasChart" style="max-height: 240px;"></canvas>
                 <script>
                     const ctx = document.getElementById('vendasChart').getContext('2d');
                     new Chart(ctx, {
@@ -184,24 +296,24 @@ HTML_TEMPLATE = """
                             datasets: [{
                                 label: 'Total Vendido (R$)',
                                 data: {{ grafico_dados|tojson }},
-                                backgroundColor: '#1a73e8',
-                                borderRadius: 5
+                                backgroundColor: '#2563eb',
+                                borderRadius: 6
                             }]
                         },
                         options: {
                             responsive: true,
                             plugins: { legend: { display: false } },
-                            scales: { y: { beginAtZero: true } }
+                            scales: { y: { beginAtZero: true, grid: { color: '#f1f5f9' } }, x: { grid: { display: false } } }
                         }
                     });
                 </script>
             {% else %}
-                <div class="empty-msg">Nenhuma venda registrada nesta loja ainda para gerar o gráfico.</div>
+                <div class="empty-msg">Nenhuma venda registrada nesta filial para gerar gráficos estatísticos ainda.</div>
             {% endif %}
         </div>
 
         <!-- HISTÓRICO RECENTE DE VENDAS -->
-        <h2>📜 Histórico Recente de Vendas</h2>
+        <h2>📜 Histórico Recente de Transações</h2>
         {% if ultimas_vendas %}
         <table>
             <thead>
@@ -209,20 +321,20 @@ HTML_TEMPLATE = """
                     <th>ID</th>
                     <th>Produto</th>
                     <th>Qtd</th>
-                    <th>Total (R$)</th>
+                    <th>Total</th>
                     <th>Data/Hora</th>
-                    <th>Ação</th>
+                    <th>Comprovante</th>
                 </tr>
             </thead>
             <tbody>
                 {% for v in ultimas_vendas %}
                 <tr>
-                    <td>#{{ v.get('id') }}</td>
+                    <td><strong>#{{ v.get('id') }}</strong></td>
                     <td>{{ v.get('produto_nome') }}</td>
                     <td>{{ v.get('quantidade') }} un</td>
-                    <td>R$ {{ "%.2f"|format(v.get('valor_total', 0)|float) }}</td>
-                    <td>{{ v.get('data_venda') }}</td>
-                    <td><a href="/comprovante_pdf/{{ v.get('id') }}" target="_blank" class="btn-pdf">📄 Baixar PDF</a></td>
+                    <td><strong>R$ {{ "%.2f"|format(v.get('valor_total', 0)|float) }}</strong></td>
+                    <td style="color: #64748b; font-size: 13px;">{{ v.get('data_venda') }}</td>
+                    <td><a href="/comprovante_pdf/{{ v.get('id') }}" target="_blank" class="btn-pdf">📄 PDF</a></td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -231,23 +343,23 @@ HTML_TEMPLATE = """
             <div class="empty-msg">Nenhuma venda efetuada recentemente.</div>
         {% endif %}
 
-        <h2>Produtos em Estoque</h2>
+        <h2>📦 Produtos em Estoque</h2>
         {% if produtos %}
         <table>
             <thead>
                 <tr>
                     <th>Código</th>
                     <th>Nome do Produto</th>
-                    <th>Preço (R$)</th>
-                    <th>Gerenciar Estoque</th>
+                    <th>Preço Unitário</th>
+                    <th>Gerenciamento de Estoque</th>
                 </tr>
             </thead>
             <tbody>
                 {% for p in produtos %}
                 {% set p_cod = p.get('codigo', p.get('id', '')) %}
                 <tr>
-                    <td><strong>{{ p_cod }}</strong></td>
-                    <td>{{ p.get('nome', '') }}</td>
+                    <td><span style="background: #f1f5f9; padding: 4px 8px; border-radius: 4px; font-weight: 600; font-size: 13px;">{{ p_cod }}</span></td>
+                    <td><strong>{{ p.get('nome', '') }}</strong></td>
                     <td>R$ {{ "%.2f"|format(p.get('preco', 0)|float) }}</td>
                     <td>
                         <div class="acoes-estoque">
@@ -255,19 +367,19 @@ HTML_TEMPLATE = """
                             <form action="/editar_estoque" method="POST" style="display: flex; gap: 4px; align-items: center; margin: 0;">
                                 <input type="hidden" name="loja_id" value="{{ loja_atual_id }}">
                                 <input type="hidden" name="produto_codigo" value="{{ p_cod }}">
-                                <input type="number" name="nova_quantidade" value="{{ p.get('quantidade', 0) }}" min="0" class="input-qtd-ajuste" required title="Novo estoque total">
-                                <button type="submit" class="btn-salvar-qtd" title="Definir estoque exato">✏️ Salvar</button>
+                                <input type="number" name="nova_quantidade" value="{{ p.get('quantidade', 0) }}" min="0" class="input-qtd-ajuste" required title="Estoque exato">
+                                <button type="submit" class="btn-salvar-qtd" title="Atualizar estoque total">✏️ Salvar</button>
                             </form>
                             
-                            <!-- Baixa Rápida por Quantidade -->
+                            <!-- Baixa Rápida -->
                             <form action="/remover_quantidade" method="POST" style="display: flex; gap: 4px; align-items: center; margin: 0;">
                                 <input type="hidden" name="loja_id" value="{{ loja_atual_id }}">
                                 <input type="hidden" name="codigo" value="{{ p_cod }}">
-                                <input type="number" name="qtd_remover" value="1" min="1" max="{{ p.get('quantidade', 0) }}" class="input-qtd-ajuste" required title="Quantidade para baixar">
-                                <button type="submit" class="btn-remover-qtd" title="Remover quantidade do estoque">➖ Baixar</button>
+                                <input type="number" name="qtd_remover" value="1" min="1" max="{{ p.get('quantidade', 0) }}" class="input-qtd-ajuste" required title="Qtd para baixar">
+                                <button type="submit" class="btn-remover-qtd" title="Baixa rápida de quantidade">➖ Baixar</button>
                             </form>
 
-                            <!-- Excluir Produto -->
+                            <!-- Excluir -->
                             <a href="/excluir_produto?codigo={{ p_cod }}&loja_id={{ loja_atual_id }}" class="btn-excluir-prod" onclick="return confirm('Deseja realmente excluir este produto desta filial?');" title="Excluir produto">🗑️ Excluir</a>
                         </div>
                     </td>
@@ -276,7 +388,7 @@ HTML_TEMPLATE = """
             </tbody>
         </table>
         {% else %}
-            <div class="empty-msg">Nenhum produto cadastrado para esta loja ainda. Utilize o formulário abaixo ou importe uma planilha!</div>
+            <div class="empty-msg">Nenhum produto cadastrado para esta filial. Utilize o formulário abaixo ou importe uma planilha!</div>
         {% endif %}
 
         <div class="grid-forms">
@@ -287,12 +399,12 @@ HTML_TEMPLATE = """
                     <input type="hidden" name="loja_id" value="{{ loja_atual_id }}">
                     
                     <div class="form-group">
-                        <label for="produto_codigo">Selecione o Produto:</label>
+                        <label for="produto_codigo">Selecione o Produto</label>
                         <select name="produto_codigo" id="produto_codigo" required {% if not produtos %}disabled{% endif %}>
                             {% if produtos %}
                                 {% for p in produtos %}
                                     {% set p_cod = p.get('codigo', p.get('id', '')) %}
-                                    <option value="{{ p_cod }}">{{ p_cod }} - {{ p.get('nome', '') }} (R$ {{ "%.2f"|format(p.get('preco', 0)|float) }}) - Restam {{ p.get('quantidade', 0) }} un</option>
+                                    <option value="{{ p_cod }}">{{ p_cod }} - {{ p.get('nome', '') }} (R$ {{ "%.2f"|format(p.get('preco', 0)|float) }}) [Estoque: {{ p.get('quantidade', 0) }}]</option>
                                 {% endfor %}
                             {% else %}
                                 <option>Cadastre um produto primeiro...</option>
@@ -301,7 +413,7 @@ HTML_TEMPLATE = """
                     </div>
 
                     <div class="form-group">
-                        <label for="quantidade">Quantidade a Vender:</label>
+                        <label for="quantidade">Quantidade a Vender</label>
                         <input type="number" id="quantidade" name="quantidade" min="1" value="1" required {% if not produtos %}disabled{% endif %}>
                     </div>
 
@@ -316,44 +428,44 @@ HTML_TEMPLATE = """
                     <input type="hidden" name="loja_id" value="{{ loja_atual_id }}">
                     
                     <div class="form-group">
-                        <label for="cad_codigo">Código do Produto (ex: P001):</label>
-                        <input type="text" id="cad_codigo" name="codigo" required placeholder="P001">
+                        <label for="cad_codigo">Código do Produto</label>
+                        <input type="text" id="cad_codigo" name="codigo" required placeholder="Ex: P001">
                     </div>
 
                     <div class="form-group">
-                        <label for="cad_nome">Nome do Produto:</label>
-                        <input type="text" id="cad_nome" name="nome" required placeholder="Ex: Camiseta P, Suplemento X">
+                        <label for="cad_nome">Nome do Produto</label>
+                        <input type="text" id="cad_nome" name="nome" required placeholder="Ex: Camiseta Básica M">
                     </div>
 
                     <div class="form-group">
-                        <label for="cad_preco">Preço de Venda (R$):</label>
+                        <label for="cad_preco">Preço de Venda (R$)</label>
                         <input type="number" step="0.01" id="cad_preco" name="preco" required placeholder="49.90">
                     </div>
 
                     <div class="form-group">
-                        <label for="cad_qtd">Quantidade Inicial em Estoque:</label>
+                        <label for="cad_qtd">Quantidade Inicial</label>
                         <input type="number" id="cad_qtd" name="quantidade" min="0" value="10" required>
                     </div>
 
-                    <button type="submit" class="btn-cadastrar">Cadastrar Produto nesta Filial</button>
+                    <button type="submit" class="btn-cadastrar">Adicionar ao Estoque</button>
                 </form>
             </div>
         </div>
 
         <!-- CADASTRAR NOVA LOJA -->
-        <div class="box-form" style="margin-top: 20px;">
+        <div class="box-form" style="margin-top: 25px;">
             <h3>🏢 Cadastrar Nova Loja / Filial</h3>
-            <form action="/cadastrar_loja" method="POST" style="display: flex; gap: 15px; flex-wrap: wrap;">
-                <div style="flex: 1; min-width: 200px;">
-                    <label for="loja_nome">Nome da Loja:</label>
-                    <input type="text" id="loja_nome" name="nome" required placeholder="Ex: Filial Centro">
+            <form action="/cadastrar_loja" method="POST" style="display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end;">
+                <div style="flex: 1; min-width: 220px; margin-bottom: 0;">
+                    <label for="loja_nome">Nome da Filial</label>
+                    <input type="text" id="loja_nome" name="nome" required placeholder="Ex: Loja Centro">
                 </div>
-                <div style="flex: 1; min-width: 200px;">
-                    <label for="loja_cnpj">CNPJ:</label>
+                <div style="flex: 1; min-width: 220px; margin-bottom: 0;">
+                    <label for="loja_cnpj">CNPJ</label>
                     <input type="text" id="loja_cnpj" name="cnpj" required placeholder="00.000.000/0001-00">
                 </div>
-                <div style="width: 100%;">
-                    <button type="submit" class="btn-cadastrar">Cadastrar Nova Loja</button>
+                <div>
+                    <button type="submit" class="btn-cadastrar" style="margin-top: 0; padding: 10px 20px;">Cadastrar Filial</button>
                 </div>
             </form>
         </div>
